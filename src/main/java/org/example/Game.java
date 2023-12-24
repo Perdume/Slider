@@ -30,17 +30,22 @@ public class Game {
             String nl = scanner.nextLine();
             Move mv = new Move();
             int[] sol = null;
-            if(Objects.equals(nl, "w")){
-                sol = mv.tryMove("y", -1, playerLocation, list, enemyLocation);
-            }
-            else if (Objects.equals(nl, "s")){
-                sol = mv.tryMove("y", 1, playerLocation, list, enemyLocation);
-            }
-            else if (Objects.equals(nl, "a")){
-                sol = mv.tryMove("x", -1, playerLocation, list, enemyLocation);
-            }
-            else if (Objects.equals(nl, "d")){
-                sol = mv.tryMove("x", 1, playerLocation, list, enemyLocation);
+            switch (nl) {
+                case "w":
+                    sol = mv.tryMove("y", -1, playerLocation, list, enemyLocation);
+                    break;
+                case "s":
+                    sol = mv.tryMove("y", 1, playerLocation, list, enemyLocation);
+                    break;
+                case "a":
+                    sol = mv.tryMove("x", -1, playerLocation, list, enemyLocation);
+                    break;
+                case "d":
+                    sol = mv.tryMove("x", 1, playerLocation, list, enemyLocation);
+                    break;
+                default:
+                    System.out.println("Invalid direction");
+                    break;
             }
             if(sol == null){
                 continue;
@@ -48,7 +53,7 @@ public class Game {
             playerLocation[0] = sol[0];
             playerLocation[1] = sol[1];
             list[playerLocation[0]][playerLocation[1]] = 1;
-            if (playerLocation == goalLocation) {
+            if (util.isEquallocation(playerLocation, goalLocation)) {
                 System.out.println("You win");
                 winnerset = true;
                 break;
@@ -94,7 +99,7 @@ public class Game {
             enemyLocation[0] = sol[0];
             enemyLocation[1] = sol[1];
             list[enemyLocation[0]][enemyLocation[1]] = 1;
-            if (enemyLocation == goalLocation) {
+            if (util.isEquallocation(enemyLocation, goalLocation)) {
                 System.out.println("You lose");
                 winnerset = true;
                 break;

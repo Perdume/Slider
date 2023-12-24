@@ -4,6 +4,7 @@ import org.example.util;
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.List;
 
 public class Minimax {
@@ -35,11 +36,10 @@ public class Minimax {
         int[][] board = boardlist.get(index);
         int[] plloc = PlLocList.get(index);
         int[] ailoc = AILocList.get(index);
-        AIMoves am = new AIMoves();
-        am.getAIMoves(util.createboard(board), util.newloc(plloc), util.newloc(ailoc), new ArrayList<>(), null);
-        PlayerMoves pm = new PlayerMoves();
-        pm.getPlayerMoves(util.createboard(board), util.newloc(plloc), util.newloc(ailoc), new ArrayList<>(), null);
-        return getval(ailoc[0], ailoc[1]) * 0.4 + am.result.size() * 0.6 - pm.result.size() * 0.6 - getval(plloc[0], plloc[1]) * 0.4;
+        LocationSurrounding ls = new LocationSurrounding();
+        int aicount = ls.markVisited(util.createboard(board), util.newloc(plloc), util.newloc(ailoc), new HashSet<>()).size();
+        int plcount = ls.markVisited(util.createboard(board),util.newloc(ailoc), util.newloc(plloc), new HashSet<>()).size();
+        return getval(ailoc[0], ailoc[1]) * 0.4 + aicount * 0.6 - plcount * 0.6 - getval(plloc[0], plloc[1]) * 0.4;
     }
 
     private int getval(int x, int y){
@@ -50,7 +50,7 @@ public class Minimax {
                 {0, 5, 10, 1000, 10, 5, 0},
                 {-1, 0, 5, 10, 5, 0, -1},
                 {-3, -1, 0, 5, 0, -1, -3},
-                {1, -3, -1, 0, -1, -3, 1}
+                {-5, -3, -1, 0, -1, -3, -5}
         };
         return list[y][x];
     }

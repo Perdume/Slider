@@ -1,12 +1,11 @@
 package org.example.Learning;
 
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.List;
+import org.example.util;
+
+import java.util.*;
 import java.util.stream.Collectors;
 
-import static org.example.util.createboard;
-import static org.example.util.newloc;
+import static org.example.util.*;
 
 public class backtrackingAI {
     List<int[][]> boardlist;
@@ -34,14 +33,18 @@ public class backtrackingAI {
     public void cal(){
         List<Double> scorelist = new ArrayList<>();
         if(Depths != MaxDepths) {
-            for (int i=0; i<boardlist.size();i++) {
-                PlayerMoves am = new PlayerMoves();
-                am.getPlayerMoves(createboard(boardlist.get(i)), newloc(playerloc), newloc(ailoclist.get(i)), new ArrayList<>(), null);
-                backtrackingPlayer bt = new backtrackingPlayer(am.resultboard, am.playerloclist, ailoclist.get(i), am.result,Depths, MaxDepths);
-                bt.cal();
-                scorelist.add(bt.getoptimizedscore());
-            }
-            System.out.println("Depth-5: " + scorelist);
+            for (int i = 0; i < boardlist.size(); i++) {
+                if(!util.isEquallocation(ailoclist.get(i), new int[]{3, 3})){
+                    LocationSurrounding ls = new LocationSurrounding();
+                    ls.markVisited(createboard(boardlist.get(i)), newloc(playerloc), newloc(ailoclist.get(i)), new HashSet<>());
+                    backtrackingPlayer bt = new backtrackingPlayer(ls.resultboard, util.copiedloc(playerloc, ls.resultboard.size()), ailoclist.get(i), ls.result, Depths, MaxDepths);
+                    bt.cal();
+                    scorelist.add(bt.getoptimizedscore());
+                }
+                else{
+                    scorelist.add(1000.0);
+                }
+            } // set score
             int index = scorelist.indexOf(Collections.max(scorelist));
             finboard = boardlist.get(index);
             finplayerloc = playerloc;
@@ -50,7 +53,7 @@ public class backtrackingAI {
             finmove = movelist.get(index);
         }
         else{
-            Minimax mn = new Minimax(true, boardlist, (new ArrayList<>(Collections.singleton(playerloc))).stream().flatMap(item -> Collections.nCopies(boardlist.size(), item).stream()).collect(Collectors.toList()), ailoclist);
+            Minimax mn = new Minimax(true, boardlist, copiedloc(playerloc, boardlist.size()), ailoclist);
             scorelist = mn.calculate();
             int index = scorelist.indexOf(Collections.max(scorelist));
             finboard = boardlist.get(index);

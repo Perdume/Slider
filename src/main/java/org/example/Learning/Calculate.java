@@ -23,12 +23,13 @@ public class Calculate {
     }
 
     public List<String> findsolve() {
-        AIMoves am = new AIMoves();
-        am.getAIMoves(CalBoard, PlayerLoc, AILoc, new ArrayList<>(), null);
-        backtrackingAI ba = new backtrackingAI(am.resultboard, PlayerLoc, am.ailoclist, am.result, 1, 3);
+        LocationSurrounding ls = new LocationSurrounding();
+        ls.markVisited(CalBoard, AILoc, PlayerLoc, new HashSet<>());
+        backtrackingAI ba = new backtrackingAI(ls.resultboard, PlayerLoc, ls.enemyloclist, ls.result, 1, 3);
         ba.cal();
         score = ba.score;
         List<String> ret = ba.getoptimizedmove();
+        System.out.println(ret);
         return ret;
     }
     public double getScore(){

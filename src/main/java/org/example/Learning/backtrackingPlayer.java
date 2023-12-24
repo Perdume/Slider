@@ -1,7 +1,10 @@
 package org.example.Learning;
 
+import org.example.util;
+
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.List;
 
 import static org.example.util.createboard;
@@ -30,12 +33,17 @@ public class backtrackingPlayer {
     public void cal(){
         List<Double> scorelist= new ArrayList<>();
         for (int i=0; i<boardlist.size();i++) {
-            AIMoves am = new AIMoves();
-            am.getAIMoves(createboard(boardlist.get(i)), newloc(playerloclist.get(i)), newloc(ailoc), new ArrayList<>(), null);
-            backtrackingAI bt = new backtrackingAI(am.resultboard, playerloclist.get(i), am.ailoclist, am.result,Depths+1, MaxDepths);
-            bt.cal();
-            scorelist.add(bt.getoptimizedscore());
-        }
+            if(!util.isEquallocation(playerloclist.get(i), new int[]{3, 3})) {
+                LocationSurrounding ls = new LocationSurrounding();
+                ls.markVisited(createboard(boardlist.get(i)), newloc(playerloclist.get(i)), newloc(ailoc), new HashSet<>());
+                backtrackingAI bt = new backtrackingAI(ls.resultboard, playerloclist.get(i), ls.enemyloclist, ls.result, Depths + 1, MaxDepths);
+                bt.cal();
+                scorelist.add(bt.getoptimizedscore());
+            }
+            else{
+                scorelist.add(-1000.0);
+            }
+        } // setscore
         int index = scorelist.indexOf(Collections.min(scorelist));
         finboard = boardlist.get(index);
         finplayerloc = playerloclist.get(index);
