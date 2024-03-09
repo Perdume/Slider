@@ -9,12 +9,9 @@ public class Calculate {
     int[] AILoc;
     int[] PlayerLoc;
 
+    int[][] SolBoard;
+
     double score = 0;
-
-    List<List<String>> solve = new ArrayList<>(); //Solve#1 List
-    List<Integer> solveturn = new ArrayList<>();
-
-    private final int[] goalLocation = new int[]{3, 3};
 
     public Calculate(int[][] board, int[] plloc, int[] ailoc) {
         CalBoard = board;
@@ -25,9 +22,13 @@ public class Calculate {
     public List<String> findsolve() {
         LocationSurrounding ls = new LocationSurrounding();
         ls.markVisited(CalBoard, AILoc, PlayerLoc, new HashSet<>());
-        backtrackingAI ba = new backtrackingAI(ls.resultboard, PlayerLoc, ls.enemyloclist, ls.result, 1, 3);
+        ls.Clearing();
+        backtrackingAI ba = new backtrackingAI(ls.resultboard, PlayerLoc, ls.enemyloclist, ls.result, 1, 5);
         ba.cal();
         score = ba.score;
+        System.out.println(Arrays.toString(ba.getoptimizedailoc()));
+        System.out.println(Arrays.toString(ba.getoptimizedplayerloc()));
+//        listtoscreen(ba.getoptimizedboard(), ba.getoptimizedplayerloc(), ba.getoptimizedailoc());
         List<String> ret = ba.getoptimizedmove();
         System.out.println(ret);
         return ret;

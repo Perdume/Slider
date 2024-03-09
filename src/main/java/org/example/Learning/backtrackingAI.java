@@ -37,6 +37,7 @@ public class backtrackingAI {
                 if(!util.isEquallocation(ailoclist.get(i), new int[]{3, 3})){
                     LocationSurrounding ls = new LocationSurrounding();
                     ls.markVisited(createboard(boardlist.get(i)), newloc(playerloc), newloc(ailoclist.get(i)), new HashSet<>());
+                    ls.Clearing();
                     backtrackingPlayer bt = new backtrackingPlayer(ls.resultboard, util.copiedloc(playerloc, ls.resultboard.size()), ailoclist.get(i), ls.result, Depths, MaxDepths);
                     bt.cal();
                     scorelist.add(bt.getoptimizedscore());

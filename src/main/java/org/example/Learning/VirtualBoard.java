@@ -2,10 +2,6 @@ package org.example.Learning;
 
 import org.example.Move;
 
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.List;
-
 public class VirtualBoard {
 
     int[][] board;
@@ -27,8 +23,8 @@ public class VirtualBoard {
         firstenemyLoc = EnemyLoc;
     }
 
-    public int[] VirtualMove(String xy, int pm){
-        int[] sol = mv.tryMove(xy, pm, playerLoc, board, enemyLoc);
+    public int[] VirtualMove(int dx, int dy){
+        int[] sol = mv.tryMove(dx, dy, playerLoc, board, enemyLoc);
         if(sol==null){
             return null;
         }
@@ -40,45 +36,6 @@ public class VirtualBoard {
             board[playerLoc[0]][playerLoc[1]] = 1;
         }
         return sol;
-    }
-
-    public List<String> getCanAIMove(){
-        List<String> ret = new ArrayList<>();
-        if(mv.canMove(enemyLoc, "y", -1)){
-            ret.add("w");
-        }
-        if(mv.canMove(enemyLoc, "y", 1)){
-            ret.add("s");
-        }
-        if(mv.canMove(enemyLoc, "x", -1)){
-            ret.add("a");
-        }
-        if(mv.canMove(enemyLoc, "x", 1)){
-            ret.add("d");
-        }
-        return ret;
-    }
-
-    public void resetBoard(){
-        board = firstboard;
-        playerLoc = firstplayerLoc;
-        enemyLoc = firstenemyLoc;
-    }
-    public List<String> getCanplayeMove(){
-        List<String> ret = new ArrayList<>();
-        if(mv.canMove(playerLoc, "y", -1)){
-            ret.add("w");
-        }
-        if(mv.canMove(playerLoc, "y", 1)){
-            ret.add("s");
-        }
-        if(mv.canMove(playerLoc, "x", -1)){
-            ret.add("a");
-        }
-        if(mv.canMove(playerLoc, "x", 1)){
-            ret.add("d");
-        }
-        return ret;
     }
 
     public int[][] getBoard(){

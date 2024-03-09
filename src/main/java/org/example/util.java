@@ -1,7 +1,6 @@
 package org.example;
 
-import java.util.ArrayList;
-import java.util.List;
+import java.util.*;
 
 public class util {
     public static int[][] createboard(int[][] board){
@@ -12,9 +11,9 @@ public class util {
         return nb;
     }
     public static int[] newloc(int[] playerloc){
-        int[] nl = new int[2];
-        System.arraycopy(playerloc, 0, nl, 0, playerloc.length);
-        return nl;
+        int[] cl = new int[playerloc.length];
+        System.arraycopy(playerloc, 0, cl, 0, playerloc.length);
+        return cl;
     }
 
     public static List<int[]> copiedloc(int[] loc, int count){
@@ -22,6 +21,7 @@ public class util {
         for(int i=0; i < count; i++){
             list.add(loc);
         }
+
         return list;
     }
 

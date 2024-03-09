@@ -3,20 +3,20 @@ package org.example;
 import java.util.Objects;
 
 public class Move {
-    public int[] tryMove(String axis, int pm, int[] location, int[][] board, int[] enemyloc) {
-        if (canMove(location, axis, pm) && isthereplayer(location, axis, pm, enemyloc)) {
-            return move(axis, pm, location[0], location[1], board);
+    public int[] tryMove(int dx, int dy, int[] location, int[][] board, int[] enemyloc) {
+        if (canMove(location, dx, dy) && isthereplayer(location, dx, dy, enemyloc)) {
+            return move(dx, dy, location[0], location[1], board);
         }
         return null;
     }
 
-    private boolean isthereplayer(int[] loc, String xy, int pm, int[] enemyloc){
+    private boolean isthereplayer(int[] loc, int dx, int dy, int[] enemyloc){
         int row = loc[0];
         int col = loc[1];
-        if (Objects.equals(xy, "x")) {
-            return col + pm != enemyloc[1] || row != enemyloc[0];
-        } else if (Objects.equals(xy, "y")) {
-            return col != enemyloc[1] || row + pm != enemyloc[0];
+        if (dy == 0) {
+            return col + dx != enemyloc[1] || row != enemyloc[0];
+        } else if (dx == 0) {
+            return col != enemyloc[1] || row + dy != enemyloc[0];
         }
         return true;
     }
@@ -26,23 +26,23 @@ public class Move {
         return value >= 0 && value <= 6;
     }
 
-    public boolean canMove(int[] loc, String xy, int pm) {
+    public boolean canMove(int[] loc, int dx, int dy) {
         int row = loc[0];
         int col = loc[1];
 
-        if (Objects.equals(xy, "x")) {
-            return isWithinBounds(col + pm);
-        } else if (Objects.equals(xy, "y")) {
-            return isWithinBounds(row + pm);
+        if (dy == 0) {
+            return isWithinBounds(col + dx);
+        } else if (dx == 0) {
+            return isWithinBounds(row + dy);
         }
         return false;
     }
 
-    private int[] move(String xy, int pm, int row, int col, int[][] list) {
-        if (Objects.equals(xy, "x")) {
-            return movePiece(row, col, row, col + pm, 0, pm, list);
-        } else if (Objects.equals(xy, "y")) {
-            return movePiece(row, col, row + pm, col, pm, 0, list);
+    private int[] move(int dx, int dy, int row, int col, int[][] list) {
+        if (dy == 0) {
+            return movePiece(row, col, row, col + dx, 0, dx, list);
+        } else if (dx == 0) {
+            return movePiece(row, col, dy, col, dy, 0, list);
         }
         return null;
     }
@@ -51,7 +51,7 @@ public class Move {
         if (list[toRow][toCol] == 0) {
             int hatchMove = 0;
             if (rowMove == 0) {
-                while (canMove(new int[]{fromRow, fromCol + hatchMove}, "x", colMove)) {
+                while (canMove(new int[]{fromRow, fromCol + hatchMove}, colMove, 0)) {
                     if (list[fromRow][fromCol + hatchMove + colMove] != 1) {
                         hatchMove += colMove;
                     } else {
@@ -59,7 +59,7 @@ public class Move {
                     }
                 }
             } else if (colMove == 0) {
-                while (canMove(new int[]{fromRow + hatchMove, fromCol}, "y", rowMove)) {
+                while (canMove(new int[]{fromRow + hatchMove, fromCol}, 0, rowMove)) {
                     if (list[fromRow + hatchMove + rowMove][fromCol] != 1) {
                         hatchMove += rowMove;
                     } else {

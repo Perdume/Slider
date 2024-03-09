@@ -39,7 +39,9 @@ public class Minimax {
         LocationSurrounding ls = new LocationSurrounding();
         int aicount = ls.markVisited(util.createboard(board), util.newloc(plloc), util.newloc(ailoc), new HashSet<>()).size();
         int plcount = ls.markVisited(util.createboard(board),util.newloc(ailoc), util.newloc(plloc), new HashSet<>()).size();
-        return getval(ailoc[0], ailoc[1]) * 0.4 + aicount * 0.6 - plcount * 0.6 - getval(plloc[0], plloc[1]) * 0.4;
+
+
+        return getval(ailoc[0], ailoc[1]) * 0.6 * aicount- plcount* getval(plloc[0], plloc[1]) * 0.6; // Get score
     }
 
     private int getval(int x, int y){

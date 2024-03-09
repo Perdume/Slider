@@ -36,6 +36,7 @@ public class backtrackingPlayer {
             if(!util.isEquallocation(playerloclist.get(i), new int[]{3, 3})) {
                 LocationSurrounding ls = new LocationSurrounding();
                 ls.markVisited(createboard(boardlist.get(i)), newloc(playerloclist.get(i)), newloc(ailoc), new HashSet<>());
+                ls.Clearing();
                 backtrackingAI bt = new backtrackingAI(ls.resultboard, playerloclist.get(i), ls.enemyloclist, ls.result, Depths + 1, MaxDepths);
                 bt.cal();
                 scorelist.add(bt.getoptimizedscore());
@@ -44,7 +45,7 @@ public class backtrackingPlayer {
                 scorelist.add(-1000.0);
             }
         } // setscore
-        int index = scorelist.indexOf(Collections.min(scorelist));
+        int index = scorelist.indexOf(Collections.max(scorelist));
         finboard = boardlist.get(index);
         finplayerloc = playerloclist.get(index);
         finailoc = ailoc;

@@ -32,16 +32,16 @@ public class Game {
             int[] sol = null;
             switch (nl) {
                 case "w":
-                    sol = mv.tryMove("y", -1, playerLocation, list, enemyLocation);
+                    sol = mv.tryMove(0, -1, playerLocation, list, enemyLocation);
                     break;
                 case "s":
-                    sol = mv.tryMove("y", 1, playerLocation, list, enemyLocation);
+                    sol = mv.tryMove(0, 1, playerLocation, list, enemyLocation);
                     break;
                 case "a":
-                    sol = mv.tryMove("x", -1, playerLocation, list, enemyLocation);
+                    sol = mv.tryMove(-1, 0, playerLocation, list, enemyLocation);
                     break;
                 case "d":
-                    sol = mv.tryMove("x", 1, playerLocation, list, enemyLocation);
+                    sol = mv.tryMove(1, 0, playerLocation, list, enemyLocation);
                     break;
                 default:
                     System.out.println("Invalid direction");
@@ -72,26 +72,33 @@ public class Game {
         }
     }
 
+    public static void clearScreen() {
+        for (int i = 0; i < 80; i++)
+            System.out.println();
+    }
     public void EnemyTurn(){
         Calculate cal = new Calculate(util.createboard(list), new int[]{playerLocation[0], playerLocation[1]}, new int[]{enemyLocation[0], enemyLocation[1]});
-        cal.findsolve();
+        long beforeTime = System.currentTimeMillis();
         List<String> Move = cal.findsolve();
+        long afterTime = System.currentTimeMillis(); // 코드 실행 후에 시간 받아오기
+        long secDiffTime = (afterTime - beforeTime); //두 시간에 차 계산
+        System.out.println("시간차이(m) : "+secDiffTime);
         System.out.println("Player Win rate: "  + (-1) * cal.getScore());
         for(String s: Move) {
             int[] FirstPoint = new int[]{enemyLocation[0], enemyLocation[1]};;
             Move mv = new Move();
             int[] sol = null;
             if(Objects.equals(s, "w")){
-                sol = mv.tryMove("y", -1, enemyLocation, list, playerLocation);
+                sol = mv.tryMove(0, -1, enemyLocation, list, playerLocation);
             }
             else if (Objects.equals(s, "s")){
-                sol = mv.tryMove("y", 1, enemyLocation, list, playerLocation);
+                sol = mv.tryMove(0, 1, enemyLocation, list, playerLocation);
             }
             else if (Objects.equals(s, "a")){
-                sol = mv.tryMove("x", -1, enemyLocation, list, playerLocation);
+                sol = mv.tryMove(-1, 0, enemyLocation, list, playerLocation);
             }
             else if (Objects.equals(s, "d")){
-                sol = mv.tryMove("x", 1, enemyLocation, list, playerLocation);
+                sol = mv.tryMove(1, 0, enemyLocation, list, playerLocation);
             }
             if(sol == null){
                 continue;
@@ -117,14 +124,14 @@ public class Game {
 
     private void resetboard(){
         list = new int[][]{
-                {1, 1, 0, 0, 0, 1, 1}, // x
+                //0->blank space, 1->slider
+                {1, 1, 0, 0, 0, 1, 1},
                 {1, 0, 0, 0, 0, 0, 1},
                 {0, 0, 0, 0, 0, 0, 0},
-                {0, 0, 0, 0, 0, 0, 0}, // 2-> goal
+                {0, 0, 0, 0, 0, 0, 0},
                 {0, 0, 0, 0, 0, 0, 0},
                 {1, 0, 0, 0, 0, 0, 1},
                 {1, 1, 0, 0, 0, 1, 1}
-                // y
         };
     }
 
