@@ -1,12 +1,17 @@
 package org.example.Learning;
 
 import java.util.Arrays;
+import java.util.Map;
 
 /**
  * 반복 심화(iterative deepening) + 알파베타 가지치기 negamax 탐색 AI.
  * 주어진 시간 안에서 가능한 한 깊이 탐색하고, 트랜스포지션 테이블과
  * 킬러/히스토리 휴리스틱으로 수 정렬을 개선한다.
  * 점수는 항상 "지금 둘 차례인 쪽" 기준이다.
+ *
+ * 한 편은 말을 여러 개(보통 2개) 가진다. 한 턴에 말 하나만 움직이고, 어느 말이든 골에 멈추면 이긴다.
+ * 말은 비트마스크(me / opp)로 다루며, 같은 편 말끼리는 순서가 없으므로 같은 국면이 TT 에서 합쳐진다.
+ * 둘 수 있는 수가 없으면 차례를 넘기고, 같은 국면이 3번 나오면 무승부(0점)다.
  *
  * 이 게임은 서로 위협을 막기만 하면 잘 끝나지 않아서, 순수 minimax 는 지지는 않지만 이기려 하지도 않는다.
  * 그래서 안전한 수들 중에서는 "상대가 직접적인 위협에만 반응한다"고 가정한 탐색으로 공격 계획을 세운다.
@@ -17,6 +22,7 @@ public class SliderAI {
     // 상대가 계획을 방해하지 않는다고 가정했을 때 찾은 승리 (확정 승리는 아니다)
     public static final int PLAN_WIN = 5_000;
     public static final int PLAN_BOUND = PLAN_WIN - 1_000;
+    public static final int DRAW = 0;
     private static final int INF = WIN + 1;
 
     private static final int MAX_PLY = 64;
@@ -30,10 +36,9 @@ public class SliderAI {
     private static final int TRAP_WEIGHT = 60;
     // 이 ply 부터 상대는 직접적인 위협이 없으면 수를 쉰다고 가정한다 (1, 3 ply 의 상대 응수는 모두 본다)
     private static final int PLAN_PLY = 5;
-    private static final int MOBILITY_WEIGHT = 1;
-    private static final int REACH_WEIGHT = 2;
-    // 이기기까지 남은 수(어림)별 점수: 2수 -> 150, 3수 -> 70, ...
-    private static final int[] PLAN_VALUE = {0, 0, 150, 70, 30, 12};
+    // 이기기까지 남은 수(어림)가 이 범위인 직선만 평가에 쓴다 (2수 -> plan2, ... 5수 -> plan5)
+    private static final int PLAN_MIN_COST = 2;
+    private static final int PLAN_MAX_COST = 5;
 
     // 중앙에 가까울수록 높은 위치 점수
     private static final int[] POSITION = {
@@ -97,13 +102,17 @@ public class SliderAI {
 
     private final long timeLimitMs;
     private final int maxDepth;
+    private final int[] weights;
+    private final int[] feature = new int[EvalWeights.COUNT];
 
     private final long[] ttTiles = new long[TT_SIZE];
-    private final int[] ttPos = new int[TT_SIZE];
+    private final long[] ttMe = new long[TT_SIZE];
+    private final long[] ttOpp = new long[TT_SIZE];
     private final int[] ttScore = new int[TT_SIZE];
     private final int[] ttMove = new int[TT_SIZE];
     private final byte[] ttDepth = new byte[TT_SIZE];
     private final byte[] ttFlag = new byte[TT_SIZE];
+    private final byte[] ttMode = new byte[TT_SIZE];
 
     private final int[][] moves = new int[MAX_PLY][BitBoard.MAX_MOVES];
     private final int[][] keys = new int[MAX_PLY][BitBoard.MAX_MOVES];
@@ -111,6 +120,12 @@ public class SliderAI {
     private final int[] history = new int[256];
     private final int[] scratch = new int[BitBoard.MAX_MOVES];
     private final int[] backCost = new int[4];
+    private final long[] reachBuf = new long[1];
+    // 지금 탐색 경로의 국면 해시 (반복 판정용)
+    private final long[] path = new long[MAX_PLY + 1];
+
+    // 실제 게임에서 이미 나온 국면의 횟수 (positionHash 기준). 3번째 반복은 무승부다.
+    private Map<Long, Integer> gameHistory = Map.of();
 
     private long deadline;
     private long nodes;
@@ -118,19 +133,59 @@ public class SliderAI {
     private boolean mayAbort;
     private int optPly;
 
+    /** 기본 가중치를 쓰는 AI. */
     public SliderAI(long timeLimitMs, int maxDepth) {
+        this(timeLimitMs, maxDepth, EvalWeights.defaults());
+    }
+
+    public SliderAI(long timeLimitMs, int maxDepth, EvalWeights weights) {
         this.timeLimitMs = timeLimitMs;
         this.maxDepth = Math.min(maxDepth, MAX_PLY - 2);
+        this.weights = weights.toArray();
     }
 
     /**
-     * me 차례에서 최선의 수를 찾는다. 둘 수 있는 수가 없으면 move 는 -1.
+     * me 가 둘 차례인 국면의 평가 특징 (EvalWeights 의 정의 순서). 학습 데이터를 만들 때 쓴다.
+     * me 가 바로 이길 수 있는 국면은 평가 대상이 아니므로 호출하는 쪽에서 걸러야 한다.
+     */
+    public int[] features(long tiles, long me, long opp) {
+        tiles |= me | opp;
+        int[] list = new int[BitBoard.MAX_MOVES];
+        int n = BitBoard.generate(tiles, me, opp, list, reachBuf);
+        computeFeatures(tiles, me, opp, reachBuf[0], list, n);
+        return feature.clone();
+    }
+
+    /** 실제 게임에서 지금까지 나온 국면과 횟수. 키는 positionHash(tiles, 둘 차례인 쪽 말, 반대편 말). */
+    public void setGameHistory(Map<Long, Integer> gameHistory) {
+        this.gameHistory = gameHistory == null ? Map.of() : gameHistory;
+    }
+
+    /**
+     * 국면 해시. me 는 둘 차례인 쪽의 말, opp 는 반대편 말 비트마스크다.
+     * 같은 편 말끼리는 순서가 없고, 누구 차례인지도 구분된다.
+     */
+    public static long positionHash(long tiles, long me, long opp) {
+        return mix(mix(mix(tiles + 0x9E3779B97F4A7C15L) ^ me) ^ (opp * 0xC2B2AE3D27D4EB4FL));
+    }
+
+    private static long mix(long x) {
+        x ^= x >>> 30;
+        x *= 0xBF58476D1CE4E5B9L;
+        x ^= x >>> 27;
+        x *= 0x94D049BB133111EBL;
+        x ^= x >>> 31;
+        return x;
+    }
+
+    /**
+     * me 차례에서 최선의 수를 찾는다. 둘 수 있는 수가 없으면 move 는 -1 (차례를 넘긴다).
      * 1단계: 정확한 minimax 로 안전한 수(최선과 MARGIN 이내)를 고른다.
      * 2단계: 안전한 수들만 "상대는 직접적인 위협에만 반응한다"고 가정한 탐색으로 다시 비교해
      *        여러 수에 걸친 공격 계획이 있는 수를 고른다.
      */
-    public Result search(long tiles, int me, int opp) {
-        tiles |= 1L << me | 1L << opp;
+    public Result search(long tiles, long me, long opp) {
+        tiles |= me | opp;
         long start = System.currentTimeMillis();
         nodes = 0;
 
@@ -144,6 +199,7 @@ public class SliderAI {
                 return new Result(rootMoves[i], WIN, 1, 1);
             }
         }
+        path[0] = positionHash(tiles, me, opp);
         rootMoves = Arrays.copyOf(rootMoves, n);
         int[] scores = new int[n];
         optPly = NO_PLAN;
@@ -166,7 +222,7 @@ public class SliderAI {
     }
 
     /** 반복 심화로 rootMoves 를 탐색하고 마지막으로 끝낸 깊이의 점수 순서로 정렬한다. 끝낸 깊이를 돌려준다. */
-    private int iterate(long tiles, int me, int opp, int[] rootMoves, int[] scores, long until) {
+    private int iterate(long tiles, long me, long opp, int[] rootMoves, int[] scores, long until) {
         deadline = until;
         aborted = false;
         int n = rootMoves.length;
@@ -184,7 +240,7 @@ public class SliderAI {
                 int m = work[i];
                 // 최선수와 MARGIN 이내인 수는 정확한 점수를 얻도록 창을 넓힌다
                 int floor = best == -INF ? -INF : best - MARGIN;
-                workScores[i] = -negamax(BitBoard.apply(tiles, m), opp, BitBoard.dest(m), depth - 1, -INF, -floor, 1);
+                workScores[i] = -negamax(BitBoard.apply(tiles, m), opp, BitBoard.applyPieces(me, m), depth - 1, -INF, -floor, 1);
                 best = Math.max(best, workScores[i]);
             }
             if (aborted) {
@@ -206,7 +262,7 @@ public class SliderAI {
      * 상대가 막지 못하면 바로 이길 수 있는 응수의 비율(함정)이 높은 수를 우선한다.
      * 완벽한 상대에게는 비슷한 결과지만, 실수하는 상대(사람)를 이기는 데 도움이 된다.
      */
-    private int choose(long tiles, int me, int opp, int[] rootMoves, int[] scores) {
+    private int choose(long tiles, long me, long opp, int[] rootMoves, int[] scores) {
         int bestScore = scores[0];
         if (Math.abs(bestScore) >= PLAN_BOUND) {
             return rootMoves[0];
@@ -217,12 +273,12 @@ public class SliderAI {
         for (int i = 0; i < rootMoves.length && scores[i] > bestScore - MARGIN; i++) {
             int m = rootMoves[i];
             long after = BitBoard.apply(tiles, m);
-            int myCell = BitBoard.dest(m);
-            int n = BitBoard.generate(after, opp, myCell, replies);
+            long myAfter = BitBoard.applyPieces(me, m);
+            int n = BitBoard.generate(after, opp, myAfter, replies);
             int traps = 0;
             for (int j = 0; j < n; j++) {
                 int r = replies[j];
-                if (canWin(BitBoard.apply(after, r), myCell, BitBoard.dest(r))) {
+                if (canWin(BitBoard.apply(after, r), myAfter, BitBoard.applyPieces(opp, r))) {
                     traps++;
                 }
             }
@@ -235,7 +291,7 @@ public class SliderAI {
         return chosen;
     }
 
-    private boolean canWin(long tiles, int me, int opp) {
+    private boolean canWin(long tiles, long me, long opp) {
         int n = BitBoard.generate(tiles, me, opp, scratch);
         for (int i = 0; i < n; i++) {
             if (BitBoard.dest(scratch[i]) == BitBoard.GOAL) {
@@ -245,7 +301,7 @@ public class SliderAI {
         return false;
     }
 
-    private int negamax(long tiles, int me, int opp, int depth, int alpha, int beta, int ply) {
+    private int negamax(long tiles, long me, long opp, int depth, int alpha, int beta, int ply) {
         if ((++nodes & 1023) == 0 && mayAbort && System.currentTimeMillis() > deadline) {
             aborted = true;
         }
@@ -253,13 +309,25 @@ public class SliderAI {
             return 0;
         }
 
+        // 반복 국면은 무승부다. 같은 차례의 국면은 2 ply 간격으로만 다시 나올 수 있다.
+        // 탐색 경로에서 한 번이라도 반복되면 순환으로 보고, 실제 게임에서 이미 2번 나온 국면이면 3번째라서 무승부다.
+        long hash = positionHash(tiles, me, opp);
+        path[ply] = hash;
+        for (int i = ply - 2; i >= 0; i -= 2) {
+            if (path[i] == hash) {
+                return DRAW;
+            }
+        }
+        if (!gameHistory.isEmpty() && gameHistory.getOrDefault(hash, 0) >= 2) {
+            return DRAW;
+        }
+
         // 같은 국면이라도 탐색 방식(정확/낙관, 낙관까지 남은 수)이 다르면 값이 다르므로 TT 키에 넣는다
         boolean optimistic = ply >= optPly;
         int mode = optimistic ? 1 + (ply & 1) : optPly == NO_PLAN ? 0 : 3 + optPly - ply;
-        int idx = index(tiles, me, opp, mode);
-        int pos = ((me << 8 | opp) << 4 | mode) + 1;
+        int idx = index(hash, mode);
         int ttBest = -1;
-        if (ttPos[idx] == pos && ttTiles[idx] == tiles) {
+        if (ttMe[idx] == me && ttOpp[idx] == opp && ttTiles[idx] == tiles && ttMode[idx] == mode) {
             ttBest = ttMove[idx];
             if (ttDepth[idx] >= depth) {
                 int s = fromTT(ttScore[idx], ply);
@@ -271,15 +339,15 @@ public class SliderAI {
         }
 
         int[] list = moves[ply];
-        long reach = BitBoard.reach(tiles, me, opp);
-        int n = BitBoard.generate(tiles, reach, list);
+        int n = BitBoard.generate(tiles, me, opp, list, reachBuf);
+        long reachMe = reachBuf[0];
         for (int i = 0; i < n; i++) {
             if (BitBoard.dest(list[i]) == BitBoard.GOAL) {
                 return (optimistic ? PLAN_WIN : WIN) - ply;
             }
         }
         if (depth <= 0 || ply >= MAX_PLY - 1) {
-            return evaluate(tiles, me, opp, reach, list, n);
+            return evaluate(tiles, me, opp, reachMe, list, n);
         }
         if (optimistic && (ply & 1) == 1 && !canWin(tiles, opp, me)) {
             // 깊은 곳에서 상대는 바로 이기거나 직접적인 위협을 막을 때만 움직인다고 가정한다.
@@ -287,7 +355,7 @@ public class SliderAI {
             return -negamax(tiles, opp, me, depth - 1, -beta, -alpha, ply + 1);
         }
         if (n == 0) {
-            // 움직일 곳이 없으면 차례를 넘긴다 (기본 보드에서는 일어나지 않는다)
+            // 둘 수 있는 수가 없으면 차례를 넘긴다
             return -negamax(tiles, opp, me, depth - 1, -beta, -alpha, ply + 1);
         }
 
@@ -311,7 +379,7 @@ public class SliderAI {
         for (int i = 0; i < n; i++) {
             pickNext(list, key, i, n);
             int m = list[i];
-            int s = -negamax(BitBoard.apply(tiles, m), opp, BitBoard.dest(m), depth - 1, -beta, -alpha, ply + 1);
+            int s = -negamax(BitBoard.apply(tiles, m), opp, BitBoard.applyPieces(me, m), depth - 1, -beta, -alpha, ply + 1);
             if (aborted) {
                 return 0;
             }
@@ -333,7 +401,9 @@ public class SliderAI {
         }
 
         ttTiles[idx] = tiles;
-        ttPos[idx] = pos;
+        ttMe[idx] = me;
+        ttOpp[idx] = opp;
+        ttMode[idx] = (byte) mode;
         ttScore[idx] = toTT(best, ply);
         ttMove[idx] = bestMove;
         ttDepth[idx] = (byte) depth;
@@ -342,9 +412,19 @@ public class SliderAI {
     }
 
     /** 말단 평가. me 가 둘 차례이고, me 가 바로 이길 수 없는 상태라고 가정한다. */
-    private int evaluate(long tiles, int me, int opp, long reachMe, int[] listMe, int movesMe) {
-        long reachOpp = BitBoard.reach(tiles, opp, me);
-        int movesOpp = BitBoard.generate(tiles, reachOpp, scratch);
+    private int evaluate(long tiles, long me, long opp, long reachMe, int[] listMe, int movesMe) {
+        computeFeatures(tiles, me, opp, reachMe, listMe, movesMe);
+        int score = 0;
+        for (int i = 0; i < weights.length; i++) {
+            score += weights[i] * feature[i];
+        }
+        return score;
+    }
+
+    /** 평가 특징을 feature 배열에 채운다 (정의는 EvalWeights 참고). scratch 와 reachBuf 를 덮어쓴다. */
+    private void computeFeatures(long tiles, long me, long opp, long reachMe, int[] listMe, int movesMe) {
+        int movesOpp = BitBoard.generate(tiles, opp, me, scratch, reachBuf);
+        long reachOpp = reachBuf[0];
         int threatsOpp = 0;
         for (int i = 0; i < movesOpp; i++) {
             if (BitBoard.dest(scratch[i]) == BitBoard.GOAL) {
@@ -352,18 +432,28 @@ public class SliderAI {
             }
         }
 
-        int score = 0;
+        Arrays.fill(feature, 0);
         if (threatsOpp == 1) {
-            score -= 150; // 막을 수는 있지만 한 수를 강제로 써야 한다
+            feature[EvalWeights.THREAT1] = 1; // 막을 수는 있지만 한 수를 강제로 써야 한다
         } else if (threatsOpp > 1) {
-            score -= 400 + 50 * threatsOpp;
+            feature[EvalWeights.THREAT2] = 1;
+            feature[EvalWeights.THREAT2_PER] = threatsOpp;
         }
-        score += MOBILITY_WEIGHT * (movesMe - movesOpp);
-        score += REACH_WEIGHT * (Long.bitCount(reachMe) - Long.bitCount(reachOpp));
+        feature[EvalWeights.MOBILITY] = movesMe - movesOpp;
+        feature[EvalWeights.REACH] = Long.bitCount(reachMe) - Long.bitCount(reachOpp);
         backstopCosts(tiles, backCost);
-        score += planValue(tiles, reachMe, listMe, movesMe, backCost) - planValue(tiles, reachOpp, scratch, movesOpp, backCost);
-        score += POSITION[me] - POSITION[opp];
-        return score;
+        countPlans(tiles, reachMe, listMe, movesMe, backCost, 1);
+        countPlans(tiles, reachOpp, scratch, movesOpp, backCost, -1);
+        feature[EvalWeights.POSITION] = positionScore(me) - positionScore(opp);
+        feature[EvalWeights.TEMPO] = 1;
+    }
+
+    private static int positionScore(long pieces) {
+        int sum = 0;
+        for (long p = pieces; p != 0; p &= p - 1) {
+            sum += POSITION[Long.numberOfTrailingZeros(p)];
+        }
+        return sum;
     }
 
     /**
@@ -395,10 +485,11 @@ public class SliderAI {
     }
 
     /**
-     * 각 직선(골에서 바깥 방향 r)으로 이기기까지 남은 수를 어림해서 점수로 바꾼다.
+     * 각 직선(골에서 바깥 방향 r)으로 이기기까지 남은 수를 어림해서, 그 수(2~5)별 직선 개수를 sign 만큼 더한다.
      * 비용 = 받침 타일 비용 + 직선 위 첫 타일을 밟는 비용(0: 이미 밟을 수 있음, 1: 다음 수에 올라감, 2: 그 외) + 1
+     * 말이 여러 개면 reach / list 는 모든 말의 합집합이라 가장 가까운 말이 기준이 된다.
      */
-    private static int planValue(long tiles, long reach, int[] list, int n, int[] backCost) {
+    private void countPlans(long tiles, long reach, int[] list, int n, int[] backCost, int sign) {
         int lineNext = 0;
         for (int i = 0; i < n; i++) {
             int m = list[i];
@@ -408,7 +499,6 @@ public class SliderAI {
                 lineNext |= 1 << r;
             }
         }
-        int score = 0;
         for (int r = 0; r < 4; r++) {
             int cell = BitBoard.neighbor(BitBoard.GOAL, r);
             while (cell >= 0 && !BitBoard.isTile(tiles, cell)) {
@@ -416,11 +506,10 @@ public class SliderAI {
             }
             int lineCost = cell >= 0 && BitBoard.isTile(reach, cell) ? 0 : (lineNext >> r & 1) != 0 ? 1 : 2;
             int cost = backCost[r] + lineCost + 1;
-            if (cost < PLAN_VALUE.length) {
-                score += PLAN_VALUE[cost];
+            if (cost >= PLAN_MIN_COST && cost <= PLAN_MAX_COST) {
+                feature[EvalWeights.PLAN_FIRST + cost - PLAN_MIN_COST] += sign;
             }
         }
-        return score;
     }
 
     private static void pickNext(int[] list, int[] key, int from, int n) {
@@ -456,12 +545,8 @@ public class SliderAI {
         }
     }
 
-    private static int index(long tiles, int me, int opp, int mode) {
-        long h = tiles * 0x9E3779B97F4A7C15L ^ ((me * 64L + opp) * 16 + mode) * 0xC2B2AE3D27D4EB4FL;
-        h ^= h >>> 31;
-        h *= 0xBF58476D1CE4E5B9L;
-        h ^= h >>> 29;
-        return (int) h & (TT_SIZE - 1);
+    private static int index(long hash, int mode) {
+        return (int) mix(hash + mode) & (TT_SIZE - 1);
     }
 
     private static int toTT(int score, int ply) {

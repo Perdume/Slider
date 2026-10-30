@@ -4,10 +4,20 @@ import java.util.Objects;
 
 public class Move {
     public int[] tryMove(int dx, int dy, int[] location, int[][] board, int[] enemyloc) {
-        if (canMove(location, dx, dy) && isthereplayer(location, dx, dy, enemyloc)) {
-            return move(dx, dy, location[0], location[1], board);
+        return tryMove(dx, dy, location, board, new int[][]{enemyloc});
+    }
+
+    /** others: 움직이는 말을 뺀 모든 말(상대 말과 내 다른 말)의 {row, col}. 이 칸으로는 걸어갈 수 없다. */
+    public int[] tryMove(int dx, int dy, int[] location, int[][] board, int[][] others) {
+        if (!canMove(location, dx, dy)) {
+            return null;
         }
-        return null;
+        for (int[] other : others) {
+            if (!isthereplayer(location, dx, dy, other)) {
+                return null;
+            }
+        }
+        return move(dx, dy, location[0], location[1], board);
     }
 
     private boolean isthereplayer(int[] loc, int dx, int dy, int[] enemyloc){
