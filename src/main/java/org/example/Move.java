@@ -42,7 +42,7 @@ public class Move {
         if (dy == 0) {
             return movePiece(row, col, row, col + dx, 0, dx, list);
         } else if (dx == 0) {
-            return movePiece(row, col, dy, col, dy, 0, list);
+            return movePiece(row, col, row + dy, col, dy, 0, list);
         }
         return null;
     }

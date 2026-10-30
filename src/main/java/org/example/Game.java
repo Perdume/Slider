@@ -82,8 +82,8 @@ public class Game {
         List<String> Move = cal.findsolve();
         long afterTime = System.currentTimeMillis(); // 코드 실행 후에 시간 받아오기
         long secDiffTime = (afterTime - beforeTime); //두 시간에 차 계산
-        System.out.println("시간차이(m) : "+secDiffTime);
-        System.out.println("Player Win rate: "  + (-1) * cal.getScore());
+        System.out.println("시간차이(m) : "+secDiffTime + ", 탐색 깊이: " + cal.getDepth());
+        System.out.printf("AI 이동: %s, Player Win rate: %.1f%%%n", Move, cal.getPlayerWinRate() * 100);
         for(String s: Move) {
             int[] FirstPoint = new int[]{enemyLocation[0], enemyLocation[1]};;
             Move mv = new Move();
