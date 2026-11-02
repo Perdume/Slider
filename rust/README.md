@@ -65,6 +65,10 @@ target/release/trainnet --data data/nn1.jsonl --weights weights.json --out net.t
 target/release/matchup --a weights.json --net-a net.txt --b weights.json --games 200 --time-ms 50
 ```
 
+은닉 뉴런 수는 기본 32이고 빌드할 때 바꾼다: `SLIDER_HIDDEN=256 cargo build --release` (24~4096).
+신경망 파일 머리말에 크기가 적혀 있어서 크기가 다른 파일을 읽으면 오류가 난다. 같은 크기로 빌드한 실행 파일로 학습, 대국, 자가대전을 모두 해야 한다.
+탐색 중 평가마다 켜진 입력(20개 안팎) x 은닉 수만큼 더하므로, 은닉이 커지면 같은 시간에 보는 국면이 줄어든다.
+
 Colab 에서는 `colab/slider_nnue_training.ipynb` 가 위 과정을 라운드로 반복한다 (자가대전 → 학습 → 대국 확인 → 이기면 채택).
 
 학습 때 지킨 것:

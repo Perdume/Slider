@@ -354,7 +354,7 @@ mod tests {
         // 출력층을 0이 아니게 해서 첫 층까지 기울기가 흐르게 한다
         let w2_start = INPUTS * HIDDEN + HIDDEN;
         for j in 0..HIDDEN {
-            net.params[w2_start + j] = 0.3 - 0.02 * j as f32;
+            net.params[w2_start + j] = 0.3 - 0.02 * (j % 32) as f32; // 은닉 수가 커도 출력이 포화하지 않게 32마다 반복
         }
         net.params[PARAMS - 1] = 0.05;
         let r = sample_row();
@@ -367,13 +367,14 @@ mod tests {
             let mut g = vec![0.0f32; PARAMS];
             backprop(n, &r, k, t, &mut g)
         };
-        let eps = 1e-2f32;
+        let eps = 1e-3f32;
         let mut checked = 0;
         // 활성 입력의 w1, b1, w2, b2 에서 골고루 확인한다
         let mut indices: Vec<usize> = Vec::new();
         for &i in &r.active {
-            indices.push(i as usize * HIDDEN + 3);
-            indices.push(i as usize * HIDDEN + 17);
+            for j in [3, 5, 9, 12, 17, 21, 30] {
+                indices.push(i as usize * HIDDEN + j);
+            }
         }
         indices.extend([INPUTS * HIDDEN + 3, INPUTS * HIDDEN + 20, w2_start + 3, w2_start + 20, PARAMS - 1]);
         for idx in indices {

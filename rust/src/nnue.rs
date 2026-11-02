@@ -73,7 +73,26 @@ pub fn hash(tiles: u64, me: u64, opp: u64) -> u64 {
 
 use std::path::Path;
 
-pub const HIDDEN: usize = 32;
+/// 은닉 뉴런 수. 기본 32. 빌드할 때 환경 변수로 바꾼다: `SLIDER_HIDDEN=256 cargo build --release`
+/// (신경망 파일 머리말에 크기가 적혀 있어서, 크기가 다른 파일을 읽으면 오류가 난다.)
+pub const HIDDEN: usize = hidden_from_env();
+
+const fn hidden_from_env() -> usize {
+    match option_env!("SLIDER_HIDDEN") {
+        None => 32,
+        Some(s) => {
+            let b = s.as_bytes();
+            let (mut i, mut n) = (0, 0usize);
+            while i < b.len() {
+                assert!(b[i] >= b'0' && b[i] <= b'9', "SLIDER_HIDDEN 은 숫자여야 한다");
+                n = n * 10 + (b[i] - b'0') as usize;
+                i += 1;
+            }
+            assert!(n >= 24 && n <= 4096, "SLIDER_HIDDEN 은 24..4096");
+            n
+        }
+    }
+}
 /// 신경망 출력(-1..1 근처)을 평가 점수 단위로 바꾸는 배율
 pub const OUT_SCALE: f32 = 200.0;
 
