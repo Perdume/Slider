@@ -65,6 +65,130 @@ pub fn hash(tiles: u64, me: u64, opp: u64) -> u64 {
     h
 }
 
+
+// ---------------------------------------------------------------------------------------------
+// 신경망: 147개 희소 입력 -> 은닉 HIDDEN개 (clipped ReLU) -> 출력 1개
+// 평가 점수 = (기존 선형 평가) + 신경망 출력 * OUT_SCALE. 출력층을 0으로 시작하므로 학습 전에는 기존 평가와 같다.
+// ---------------------------------------------------------------------------------------------
+
+use std::path::Path;
+
+pub const HIDDEN: usize = 32;
+/// 신경망 출력(-1..1 근처)을 평가 점수 단위로 바꾸는 배율
+pub const OUT_SCALE: f32 = 200.0;
+
+const W1: usize = 0;
+const B1: usize = W1 + INPUTS * HIDDEN;
+const W2: usize = B1 + HIDDEN;
+const B2: usize = W2 + HIDDEN;
+/// 전체 파라미터 개수
+pub const PARAMS: usize = B2 + 1;
+
+/// 파라미터를 한 배열에 모아 둔다: [w1 (입력 x 은닉) | b1 | w2 | b2]
+#[derive(Clone, Debug)]
+pub struct Network {
+    pub params: Vec<f32>,
+}
+
+impl Network {
+    /// 첫 층은 작은 난수, 출력층은 0 (학습 전에는 출력이 항상 0).
+    pub fn new(seed: u64) -> Self {
+        let mut params = vec![0.0f32; PARAMS];
+        let mut state = seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1;
+        for p in params[W1..B1].iter_mut() {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            *p = ((state >> 40) as f32 / (1u64 << 24) as f32 - 0.5) * 0.2; // -0.1 .. 0.1
+        }
+        for p in params[B1..W2].iter_mut() {
+            *p = 0.1;
+        }
+        Network { params }
+    }
+
+    pub fn w1(&self, input: usize) -> &[f32] {
+        &self.params[W1 + input * HIDDEN..W1 + (input + 1) * HIDDEN]
+    }
+
+    pub fn b1(&self) -> &[f32] {
+        &self.params[B1..W2]
+    }
+
+    pub fn w2(&self) -> &[f32] {
+        &self.params[W2..B2]
+    }
+
+    pub fn b2(&self) -> f32 {
+        self.params[B2]
+    }
+
+    /// 켜진 입력으로 은닉층의 입력값(합)을 새로 계산한다 (증분 갱신이 아니라 통째로 덮어쓴다).
+    pub fn accumulate(&self, active: &[u16], acc: &mut [f32; HIDDEN]) {
+        acc.copy_from_slice(self.b1());
+        for &i in active {
+            let w = self.w1(i as usize);
+            for j in 0..HIDDEN {
+                acc[j] += w[j];
+            }
+        }
+    }
+
+    /// 은닉 합 -> 출력 (clipped ReLU 를 거친 값에 w2 를 곱해 더한다).
+    pub fn output(&self, acc: &[f32; HIDDEN]) -> f32 {
+        let w2 = self.w2();
+        let mut out = self.b2();
+        for j in 0..HIDDEN {
+            out += w2[j] * acc[j].clamp(0.0, 1.0);
+        }
+        out
+    }
+
+    /// 국면의 신경망 출력 (평가 점수 단위로 환산한 정수). 둘 차례인 쪽(me) 기준.
+    pub fn eval(&self, tiles: u64, me: u64, opp: u64) -> i32 {
+        let mut active = [0u16; MAX_ACTIVE];
+        let n = active_inputs(tiles, me, opp, &mut active);
+        let mut acc = [0.0f32; HIDDEN];
+        self.accumulate(&active[..n], &mut acc);
+        (self.output(&acc) * OUT_SCALE).round() as i32
+    }
+
+    /// 텍스트로 저장한다: 머리말 한 줄 + 파라미터 전체 (공백 구분, 값을 그대로 되살릴 수 있는 정밀도).
+    pub fn to_text(&self) -> String {
+        let mut s = format!("SLIDERNET 1 {} {}\n", INPUTS, HIDDEN);
+        let values: Vec<String> = self.params.iter().map(|v| format!("{:?}", v)).collect();
+        s.push_str(&values.join(" "));
+        s.push('\n');
+        s
+    }
+
+    pub fn from_text(text: &str) -> Result<Self, String> {
+        let mut lines = text.lines();
+        let header = lines.next().ok_or("빈 파일입니다")?;
+        let expected = format!("SLIDERNET 1 {} {}", INPUTS, HIDDEN);
+        if header.trim() != expected {
+            return Err(format!("신경망 파일 형식이 맞지 않습니다 (필요: '{}', 실제: '{}')", expected, header.trim()));
+        }
+        let params: Vec<f32> = lines
+            .flat_map(|l| l.split_whitespace())
+            .map(|t| t.parse::<f32>().map_err(|_| format!("숫자를 읽을 수 없습니다: {}", t)))
+            .collect::<Result<_, _>>()?;
+        if params.len() != PARAMS {
+            return Err(format!("파라미터 개수가 맞지 않습니다: {} (필요 {})", params.len(), PARAMS));
+        }
+        Ok(Network { params })
+    }
+
+    pub fn load(path: &Path) -> Result<Self, String> {
+        let text = std::fs::read_to_string(path).map_err(|e| format!("{}: {}", path.display(), e))?;
+        Self::from_text(&text)
+    }
+
+    pub fn save(&self, path: &Path) -> Result<(), String> {
+        std::fs::write(path, self.to_text()).map_err(|e| format!("{}: {}", path.display(), e))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -113,5 +237,37 @@ mod tests {
         assert!(n > 0);
         assert_eq!(h1, h2);
         assert_ne!(h1, hash(t, b, a));
+    }
+
+    #[test]
+    fn fresh_network_outputs_zero_so_eval_is_unchanged() {
+        let (t, a, b) = start();
+        assert_eq!(Network::new(1).eval(t, a, b), 0);
+    }
+
+    #[test]
+    fn network_text_round_trip_is_exact() {
+        let mut net = Network::new(3);
+        net.params[PARAMS - 1] = 0.123_456_79;
+        net.params[B2 - 1] = -1.5e-7;
+        let back = Network::from_text(&net.to_text()).unwrap();
+        assert_eq!(back.params, net.params);
+    }
+
+    #[test]
+    fn wrong_header_or_size_is_rejected() {
+        assert!(Network::from_text("SLIDERNET 1 3 3\n1 2 3").is_err());
+        assert!(Network::from_text(&format!("SLIDERNET 1 {} {}\n1 2 3", INPUTS, HIDDEN)).is_err());
+    }
+
+    #[test]
+    fn eval_reacts_to_the_board_once_output_weights_are_set() {
+        let (t, a, b) = start();
+        let mut net = Network::new(5);
+        for j in 0..HIDDEN {
+            net.params[W2 + j] = 0.5;
+        }
+        // 출력층이 0이 아니면 은닉층(b1 = 0.1 이상)을 거쳐 출력이 0이 아니게 된다
+        assert_ne!(net.eval(t, a, b), 0);
     }
 }

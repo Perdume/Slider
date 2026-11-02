@@ -9,10 +9,12 @@
 //! 그래서 안전한 수들 중에서는 "상대가 직접적인 위협에만 반응한다"고 가정한 탐색으로 공격 계획을 세운다.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::hash::{BuildHasherDefault, Hasher};
 use std::time::{Duration, Instant};
 
 use crate::bitboard::{self as bb, CELLS, GOAL, MAX_MOVES};
+use crate::nnue::Network;
 use crate::weights::{self, EvalWeights};
 
 /// 키가 이미 `position_hash` 로 섞인 값이라 다시 섞지 않고 그대로 쓰는 해셔 (기본 SipHash 는 노드마다 부르기엔 느리다)
@@ -139,6 +141,8 @@ pub struct SliderAi {
     time_limit_ms: u64,
     max_depth: i32,
     weights: [i32; weights::COUNT],
+    /// 있으면 말단 평가에 신경망 출력을 더한다
+    net: Option<Arc<Network>>,
     feature: [i32; weights::COUNT],
 
     /// 트랜스포지션 테이블. 칸 하나 = [tiles, me, opp, score | move << 32, depth | flag << 8 | mode << 16]
@@ -196,6 +200,7 @@ impl SliderAi {
             time_limit_ms,
             max_depth: max_depth.min(MAX_PLY as i32 - 2),
             weights: w.values,
+            net: None,
             feature: [0; weights::COUNT],
             // vec![0; n] 은 0으로 채운 메모리를 운영체제에서 바로 받아서, 쓰지 않은 칸은 실제로 건드리지 않는다
             tt: vec![[0; 5]; TT_SIZE],
@@ -213,6 +218,11 @@ impl SliderAi {
             may_abort: false,
             opt_ply: NO_PLAN,
         }
+    }
+
+    /// 말단 평가에 더할 신경망 (None 이면 기존 선형 평가만 쓴다).
+    pub fn set_net(&mut self, net: Option<Arc<Network>>) {
+        self.net = net;
     }
 
     /// 실제 게임에서 지금까지 나온 국면과 횟수. 키는 position_hash(tiles, 둘 차례인 쪽 말, 반대편 말).
@@ -504,6 +514,9 @@ impl SliderAi {
         let mut score = 0;
         for i in 0..weights::COUNT {
             score += self.weights[i] * self.feature[i];
+        }
+        if let Some(net) = &self.net {
+            score += net.eval(tiles, me, opp);
         }
         score
     }

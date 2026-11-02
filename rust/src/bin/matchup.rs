@@ -3,12 +3,16 @@
 //!
 //! 사용법:
 //!   matchup --a weights.json --b default --games 100 --time-ms 50
-//! 옵션: --a --b (JSON 경로 또는 default) --games (짝수로 올림) --time-ms --depth --random-plies --max-plies --threads --seed
+//! 옵션: --net-a --net-b 쪽별 신경망 파일 (없으면 선형 평가만)
+//!       --a --b (JSON 경로 또는 default) --games (짝수로 올림) --time-ms --depth --random-plies --max-plies --threads --seed
 
+use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 
-use slider::arena::{self, Config};
+use slider::arena::{self, Config, Player};
 use slider::cli;
+use slider::nnue::Network;
 use slider::weights::EvalWeights;
 
 fn main() {
@@ -23,6 +27,14 @@ fn run() -> Result<(), String> {
     let opt = cli::parse_args(&args)?;
     let a = EvalWeights::from_argument(opt.get("a").map(String::as_str))?;
     let b = EvalWeights::from_argument(opt.get("b").map(String::as_str))?;
+    let load_net = |key: &str| -> Result<Option<Arc<Network>>, String> {
+        match opt.get(key) {
+            Some(path) => Ok(Some(Arc::new(Network::load(Path::new(path))?))),
+            None => Ok(None),
+        }
+    };
+    let net_a = load_net("net-a")?;
+    let net_b = load_net("net-b")?;
     let games: usize = cli::get(&opt, "games", 100)?;
     let pairs = (games + 1) / 2;
     let threads: usize = cli::get(&opt, "threads", cli::default_threads())?.max(1);
@@ -37,14 +49,16 @@ fn run() -> Result<(), String> {
         epsilon: 0.0,
     };
 
-    println!("A = {}\nB = {}\n{}판 (시작 국면 {}개 x 쪽 교대), time={}ms, threads={}", a, b, pairs * 2, pairs, cfg.time_ms, threads);
+    println!("A = {}{}\nB = {}{}\n{}판 (시작 국면 {}개 x 쪽 교대), time={}ms, threads={}", a, if net_a.is_some() { " + 신경망" } else { "" }, b, if net_b.is_some() { " + 신경망" } else { "" }, pairs * 2, pairs, cfg.time_ms, threads);
 
     let a_wins = AtomicUsize::new(0);
     let b_wins = AtomicUsize::new(0);
     let draws = AtomicUsize::new(0);
     let next_pair = AtomicUsize::new(0);
-    let ab = [a.clone(), b.clone()];
-    let ba = [b.clone(), a.clone()];
+    let pa = Player::new(a.clone(), net_a);
+    let pb = Player::new(b.clone(), net_b);
+    let ab = [pa.clone(), pb.clone()];
+    let ba = [pb, pa];
 
     std::thread::scope(|scope| {
         for _ in 0..threads {

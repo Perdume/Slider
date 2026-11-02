@@ -3,9 +3,12 @@
 //! 둘 수 있는 수가 없으면 차례 넘김, 같은 국면 3번째 반복은 무승부.
 //! 쪽(side) 0 이 먼저 두고 위쪽 귀퉁이에서, 쪽 1 이 아래쪽 귀퉁이에서 시작한다.
 
+use std::sync::Arc;
+
 use crate::ai::{position_hash, History, SliderAi};
 use crate::bitboard::{self as bb, GOAL, MAX_MOVES};
 use crate::javarandom::JavaRandom;
+use crate::nnue::Network;
 use crate::weights::{self, EvalWeights};
 
 pub const START_BOARD: [[u8; 7]; 7] = [
@@ -19,6 +22,19 @@ pub const START_BOARD: [[u8; 7]; 7] = [
 ];
 pub const SIDE0_START: [(usize, usize); 2] = [(0, 0), (0, 6)];
 pub const SIDE1_START: [(usize, usize); 2] = [(6, 0), (6, 6)];
+
+/// 한 쪽의 평가: 선형 가중치 + (선택) 신경망
+#[derive(Clone)]
+pub struct Player {
+    pub weights: EvalWeights,
+    pub net: Option<Arc<Network>>,
+}
+
+impl Player {
+    pub fn new(weights: EvalWeights, net: Option<Arc<Network>>) -> Self {
+        Player { weights, net }
+    }
+}
 
 #[derive(Clone, Debug)]
 pub struct Config {
@@ -45,6 +61,10 @@ pub struct Sample {
     pub ply: usize,
     pub side: usize,
     pub features: [i32; weights::COUNT],
+    /// 이 국면 (신경망 학습용): 타일, 둘 차례인 쪽 말, 반대편 말
+    pub tiles: u64,
+    pub me: u64,
+    pub opp: u64,
     pub score: i32,
     pub outcome: f64,
 }
@@ -59,13 +79,13 @@ pub struct Outcome {
 
 /// 한 판을 둔다.
 ///
-/// - `weights[0]` 이 먼저 두는 쪽의 평가 가중치
+/// - `players[0]` 이 먼저 두는 쪽의 평가
 /// - `opening_seed` 무작위 시작 수의 시드. 같은 값이면 같은 시작 국면이 된다 (Match 에서 쪽을 바꿔 두 번 둘 때 쓴다)
 /// - `noise` epsilon 무작위 수에 쓰는 난수 (None 이면 쓰지 않는다)
 /// - `record` true 면 학습 데이터를 모은다
 pub fn play(
     cfg: &Config,
-    weights: &[EvalWeights; 2],
+    players: &[Player; 2],
     opening_seed: i64,
     mut noise: Option<&mut JavaRandom>,
     record: bool,
@@ -91,7 +111,8 @@ pub fn play(
             if ply < cfg.random_plies {
                 mv = buffer[opening.next_int(n as i32) as usize];
             } else {
-                let mut engine = SliderAi::with_weights(cfg.time_ms, cfg.max_depth, &weights[side]);
+                let mut engine = SliderAi::with_weights(cfg.time_ms, cfg.max_depth, &players[side].weights);
+                engine.set_net(players[side].net.clone());
                 engine.set_game_history(counts.clone());
                 let result = engine.search(tiles, me, opp);
                 let mut chosen = result.mv;
@@ -102,6 +123,9 @@ pub fn play(
                         ply,
                         side,
                         features: engine.features(tiles, me, opp),
+                        tiles: tiles | me | opp,
+                        me,
+                        opp,
                         score: result.score,
                         outcome: 0.0,
                     });

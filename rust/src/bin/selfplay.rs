@@ -6,6 +6,8 @@
 //! 사용법:
 //!   selfplay --games 200 --time-ms 30 --out data/selfplay.jsonl
 //! 옵션: --games --time-ms --depth --random-plies --epsilon --max-plies --threads --seed --weights --out
+//!       --net 신경망 파일 (있으면 평가에 더한다)
+//!       --positions yes  각 줄에 국면(tiles, me, opp)도 기록한다 (신경망 학습용. 기본은 기록하지 않음)
 
 use std::fs::File;
 use std::io::{BufWriter, Write};
@@ -14,9 +16,12 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
 use std::time::Instant;
 
-use slider::arena::{self, Config, Sample};
+use std::sync::Arc;
+
+use slider::arena::{self, Config, Player, Sample};
 use slider::cli;
 use slider::javarandom::JavaRandom;
+use slider::nnue::Network;
 use slider::weights::EvalWeights;
 
 fn main() {
@@ -33,6 +38,11 @@ fn run() -> Result<(), String> {
     let threads: usize = cli::get(&opt, "threads", cli::default_threads())?.max(1);
     let seed: i64 = cli::get(&opt, "seed", 1)?;
     let weights = EvalWeights::from_argument(opt.get("weights").map(String::as_str))?;
+    let net = match opt.get("net") {
+        Some(path) => Some(Arc::new(Network::load(Path::new(path))?)),
+        None => None,
+    };
+    let positions_flag = opt.get("positions").map(|v| v == "yes").unwrap_or(false);
     let out = opt.get("out").cloned().unwrap_or_else(|| "selfplay.jsonl".to_string());
 
     let cfg = Config {
@@ -60,7 +70,7 @@ fn run() -> Result<(), String> {
     let finished = AtomicUsize::new(0);
     let next_game = AtomicUsize::new(0);
     let start = Instant::now();
-    let pair = [weights.clone(), weights.clone()];
+    let pair = [Player::new(weights.clone(), net.clone()), Player::new(weights.clone(), net.clone())];
 
     std::thread::scope(|scope| {
         for _ in 0..threads {
@@ -77,7 +87,7 @@ fn run() -> Result<(), String> {
                 positions.fetch_add(outcome.samples.len(), Ordering::SeqCst);
                 let mut text = String::new();
                 for s in &outcome.samples {
-                    text.push_str(&to_json(s));
+                    text.push_str(&to_json(s, positions_flag));
                     text.push('\n');
                 }
                 writer.lock().unwrap().write_all(text.as_bytes()).expect("쓰기 실패");
@@ -106,15 +116,21 @@ fn run() -> Result<(), String> {
     Ok(())
 }
 
-fn to_json(s: &Sample) -> String {
+fn to_json(s: &Sample, with_positions: bool) -> String {
     let features: Vec<String> = s.features.iter().map(|f| f.to_string()).collect();
+    let position = if with_positions {
+        format!(",\"tiles\":{},\"me\":{},\"opp\":{}", s.tiles, s.me, s.opp)
+    } else {
+        String::new()
+    };
     format!(
-        "{{\"game\":{},\"ply\":{},\"side\":{},\"features\":[{}],\"score\":{},\"outcome\":{:?}}}",
+        "{{\"game\":{},\"ply\":{},\"side\":{},\"features\":[{}],\"score\":{},\"outcome\":{:?}{}}}",
         s.game,
         s.ply,
         s.side,
         features.join(","),
         s.score,
-        s.outcome
+        s.outcome,
+        position
     )
 }
