@@ -4,6 +4,7 @@
 //! - `weights`: 평가 가중치 (JSON 읽기/쓰기)
 //! - `ai`: 반복 심화 negamax 탐색과 평가 함수
 //! - `arena`: AI 끼리 2v2 한 판을 두는 공용 코드
+//! - `nnue`: NNUE 방식의 희소 입력 표현과 그 입력으로 만든 국면 해시
 //! - `javarandom`: java.util.Random 과 같은 난수 (시작 수를 Java 와 똑같이 재현하기 위해)
 
 pub mod ai;
@@ -11,4 +12,5 @@ pub mod arena;
 pub mod bitboard;
 pub mod cli;
 pub mod javarandom;
+pub mod nnue;
 pub mod weights;

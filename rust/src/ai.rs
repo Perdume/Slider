@@ -166,7 +166,7 @@ pub struct SliderAi {
 /// 국면 해시. me 는 둘 차례인 쪽의 말, opp 는 반대편 말 비트마스크다.
 /// 같은 편 말끼리는 순서가 없고, 누구 차례인지도 구분된다.
 pub fn position_hash(tiles: u64, me: u64, opp: u64) -> u64 {
-    mix(mix(mix(tiles.wrapping_add(0x9E37_79B9_7F4A_7C15)) ^ me) ^ opp.wrapping_mul(0xC2B2_AE3D_27D4_EB4F))
+    crate::nnue::hash(tiles, me, opp)
 }
 
 #[inline(always)]

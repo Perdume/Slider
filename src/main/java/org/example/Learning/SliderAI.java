@@ -161,12 +161,38 @@ public class SliderAI {
         this.gameHistory = gameHistory == null ? Map.of() : gameHistory;
     }
 
+    // 국면 해시용 값. 입력 번호 하나(타일 0..48, me 말 49..97, opp 말 98..146)마다 정해진 64비트 값이 있다.
+    // Rust 구현(rust/src/nnue.rs)과 같은 값이어야 두 구현이 같은 판을 둔다.
+    private static final long[] HASH_KEYS = new long[BitBoard.CELLS * 3];
+
+    static {
+        long state = 0x5EED0F511DE5L;
+        for (int i = 0; i < HASH_KEYS.length; i++) {
+            state += 0x9E3779B97F4A7C15L;
+            long z = state;
+            z = (z ^ (z >>> 30)) * 0xBF58476D1CE4E5B9L;
+            z = (z ^ (z >>> 27)) * 0x94D049BB133111EBL;
+            HASH_KEYS[i] = z ^ (z >>> 31);
+        }
+    }
+
     /**
      * 국면 해시. me 는 둘 차례인 쪽의 말, opp 는 반대편 말 비트마스크다.
+     * 결과 국면에서 통째로 계산한다: 켜진 입력(타일, me 말, opp 말)마다 정해진 값을 XOR 한다.
      * 같은 편 말끼리는 순서가 없고, 누구 차례인지도 구분된다.
      */
     public static long positionHash(long tiles, long me, long opp) {
-        return mix(mix(mix(tiles + 0x9E3779B97F4A7C15L) ^ me) ^ (opp * 0xC2B2AE3D27D4EB4FL));
+        long h = 0;
+        for (long m = tiles; m != 0; m &= m - 1) {
+            h ^= HASH_KEYS[Long.numberOfTrailingZeros(m)];
+        }
+        for (long m = me; m != 0; m &= m - 1) {
+            h ^= HASH_KEYS[BitBoard.CELLS + Long.numberOfTrailingZeros(m)];
+        }
+        for (long m = opp; m != 0; m &= m - 1) {
+            h ^= HASH_KEYS[2 * BitBoard.CELLS + Long.numberOfTrailingZeros(m)];
+        }
+        return h;
     }
 
     private static long mix(long x) {
