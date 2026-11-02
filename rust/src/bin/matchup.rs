@@ -74,6 +74,8 @@ fn run() -> Result<(), String> {
     // (A 승, 무, B 승)
     let tally = Mutex::new((0usize, 0usize, 0usize));
     let decided = AtomicBool::new(false);
+    // 경계를 넘은 순간의 판정 (그 뒤에 이미 두고 있던 판이 끝나서 LLR 이 경계 안으로 돌아와도 판정은 그대로)
+    let verdict_at_cross: Mutex<Option<&'static str>> = Mutex::new(None);
     let next_pair = AtomicUsize::new(0);
     let pa = Player::new(a.clone(), net_a);
     let pb = Player::new(b.clone(), net_b);
@@ -103,8 +105,8 @@ fn run() -> Result<(), String> {
                     if games % 40 == 0 {
                         println!("  {}판: A {}승 / 무 {} / B {}승, LLR {:.2} [{:.2}, {:.2}]", games, t.0, t.1, t.2, llr, sp.lower, sp.upper);
                     }
-                    if llr >= sp.upper || llr <= sp.lower {
-                        decided.store(true, Ordering::SeqCst);
+                    if (llr >= sp.upper || llr <= sp.lower) && !decided.swap(true, Ordering::SeqCst) {
+                        *verdict_at_cross.lock().unwrap() = Some(if llr >= sp.upper { "H1" } else { "H0" });
                     }
                 }
             });
@@ -132,7 +134,8 @@ fn run() -> Result<(), String> {
     let mut sprt_json = String::new();
     if let Some(sp) = &sprt {
         let llr = sp.llr(aw, dw, bw);
-        let verdict = if llr >= sp.upper { "H1" } else if llr <= sp.lower { "H0" } else { "undecided" };
+        let at_end = if llr >= sp.upper { "H1" } else if llr <= sp.lower { "H0" } else { "undecided" };
+        let verdict = verdict_at_cross.lock().unwrap().unwrap_or(at_end);
         let text = match verdict {
             "H1" => format!("A 가 B 보다 강하다 (Elo {} 이상 쪽 채택)", sp.elo1),
             "H0" => format!("A 가 B 보다 Elo {} 만큼 강하지는 않다 (H0 채택)", sp.elo1),
