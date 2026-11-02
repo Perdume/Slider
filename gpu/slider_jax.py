@@ -2,7 +2,8 @@
 
 규칙은 rust/src/bitboard.rs 와 같다: 한 턴에 내 말 하나를 골라 타일 위를 걷고(다른 말이 있는 칸은 못 지남),
 빈 칸 방향으로 서 있는 타일째 미끄러진다. 어느 말이든 골(3,3)에 멈추면 승리, 수가 없으면 통과,
-같은 국면(차례 포함)이 3번 나오면 무승부, 150수가 넘으면 무승부.
+같은 국면(차례 포함)이 3번 나오면 무승부. 수 제한은 없다 (안전장치 DEFAULT_MAX_PLIES 뿐).
+무승부는 양쪽 다 진 것으로 센다 (`outcome_values`).
 
 상태는 칸 49개짜리 bool 배열 3개 (tiles, me=둘 차례인 쪽 말, opp). 수 하나 = 평평한 인덱스
 k*196 + from*4 + dir  (k = 둘 중 몇 번째 말인지, 칸 번호 오름차순). 이 순서는 Rust 의 generate 순서와 같다.
@@ -14,7 +15,9 @@ from jax import lax
 
 N = 49
 GOAL = 24
-MAX_PLIES = 150
+# 수 제한은 사실상 없앤 것과 같다: 골에 닿거나 같은 국면이 3번 나오면 끝나고, 이 값은 안전장치일 뿐이다.
+# 이 값까지 가도 안 끝난 판은 무승부(둘 다 진 것)로 센다. 규칙 대조 때는 150 으로 줄여서 쓴다.
+DEFAULT_MAX_PLIES = 4096
 NUM_MOVES = 2 * N * 4
 
 _DR = [-1, 1, 0, 0]
@@ -109,32 +112,57 @@ def move_int(srcs, idx, dst):
     return c | (d << 6) | (dst << 8) | (srcs[k] << 14)
 
 
-def play_game(policy, key):
-    """한 판을 끝까지 둔다. policy(valid, n, ply, key) -> 몇 번째 수를 둘지(0..n-1). (winner, plies) 를 돌려준다.
-    winner: -1 무승부, 0 먼저 둔 쪽, 1 나중에 둔 쪽."""
-    hist = jnp.zeros((MAX_PLIES + 1, 2), jnp.uint32).at[0].set(pos_hash(START_TILES, START_P0, START_P1))
-    init = (START_TILES, START_P0, START_P1, hist, jnp.array(False), jnp.int32(-1), jnp.int32(0))
+def _step(policy, carry, key, max_plies):
+    """한 수를 둔다. 이미 끝난 판이면 아무것도 바꾸지 않는다 (기록 배열은 안 쓰는 칸에 쓰므로 통째로 복사하지 않는다)."""
+    tiles, me, opp, hist, done, winner, ply = carry
+    valid, srcs = legal(tiles, me, opp)
+    n = valid.sum()
+    has = n > 0
+    j = policy(valid, n, ply, jax.random.fold_in(key, ply))
+    idx = nth_true(valid, jnp.clip(j, 0, jnp.maximum(n - 1, 0)))
+    t2, m2, dst = apply_move(tiles, me, srcs, idx)
+    win = has & (dst == GOAL)
+    nt = jnp.where(has, t2, tiles)
+    nm = jnp.where(has, m2, me)
+    h = pos_hash(nt, opp, nm)  # 다음 차례 쪽에서 본 국면
+    prior = ((hist == h).all(-1) & (jnp.arange(max_plies + 1) <= ply)).sum()
+    rep = prior + 1 >= 3
+    hist = hist.at[jnp.where(done, max_plies, ply + 1)].set(h)
 
-    def step(carry, ply):
-        tiles, me, opp, hist, done, winner, plies = carry
-        valid, srcs = legal(tiles, me, opp)
-        n = valid.sum()
-        has = n > 0
-        j = policy(valid, n, ply, jax.random.fold_in(key, ply))
-        idx = nth_true(valid, jnp.clip(j, 0, jnp.maximum(n - 1, 0)))
-        t2, m2, dst = apply_move(tiles, me, srcs, idx)
-        win = has & (dst == GOAL)
-        nt = jnp.where(has, t2, tiles)
-        nm = jnp.where(has, m2, me)
-        h = pos_hash(nt, opp, nm)  # 다음 차례 쪽에서 본 국면
-        prior = ((hist == h).all(-1) & (jnp.arange(MAX_PLIES + 1) <= ply)).sum()
-        rep = prior + 1 >= 3
-        new = (nt, opp, nm, hist.at[ply + 1].set(h), win | rep, jnp.where(win, ply & 1, -1).astype(jnp.int32), plies + 1)
-        out = jax.tree_util.tree_map(lambda o, n_: jnp.where(done, o, n_), carry, new)
-        return out, None
+    def keep(old, new):
+        return jnp.where(done, old, new)
 
-    final, _ = lax.scan(step, init, jnp.arange(MAX_PLIES))
-    return final[5], final[6]
+    return (keep(tiles, nt), keep(me, opp), keep(opp, nm), hist, keep(done, win | rep),
+            keep(winner, jnp.where(win, ply & 1, -1).astype(jnp.int32)), keep(ply, ply + 1))
+
+
+def _initial(max_plies):
+    hist = jnp.zeros((max_plies + 1, 2), jnp.uint32).at[0].set(pos_hash(START_TILES, START_P0, START_P1))
+    return (START_TILES, START_P0, START_P1, hist, jnp.array(False), jnp.int32(-1), jnp.int32(0))
+
+
+def play_game(policy, key, max_plies=DEFAULT_MAX_PLIES):
+    """한 판을 끝까지 둔다. policy(valid, n, ply, key) -> 몇 번째 수를 둘지(0..n-1).
+    (winner, plies, ended) 를 돌려준다. winner: -1 무승부, 0 먼저 둔 쪽, 1 나중에 둔 쪽.
+    ended 가 False 면 max_plies 까지 가도 안 끝난 판이다 (무승부로 센다)."""
+    final = lax.while_loop(lambda c: (~c[4]) & (c[6] < max_plies),
+                           lambda c: _step(policy, c, key, max_plies), _initial(max_plies))
+    return final[5], final[6], final[4]
+
+
+def play_batch(policy, keys, max_plies=DEFAULT_MAX_PLIES):
+    """판 여러 개를 동시에 둔다 (keys: 판마다 난수 키). 모두 끝나면 멈춘다. play_game 과 같은 결과를 더 빨리 낸다."""
+    B = keys.shape[0]
+    init = jax.tree_util.tree_map(lambda x: jnp.broadcast_to(x, (B,) + x.shape), _initial(max_plies))
+    step = jax.vmap(lambda c, k: _step(policy, c, k, max_plies))
+    final = lax.while_loop(lambda c: (~c[4]).any() & (c[6].max() < max_plies),
+                           lambda c: step(c, keys), init)
+    return final[5], final[6], final[4]
+
+
+def outcome_values(winner):
+    """(먼저 둔 쪽 점수, 나중에 둔 쪽 점수). 이기면 1, 지면 0, 무승부는 둘 다 0 (둘 다 진 것)."""
+    return (winner == 0).astype(jnp.float32), (winner == 1).astype(jnp.float32)
 
 
 def random_policy(valid, n, ply, key):

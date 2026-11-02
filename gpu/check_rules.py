@@ -73,9 +73,9 @@ def check_games(a_max=20, b_max=20):
     @jax.jit
     @jax.vmap
     def play(a, b):
-        return sj.play_game(lambda valid, n, ply, key: (ply * a + b) % jnp.maximum(n, 1), jax.random.PRNGKey(0))
+        return sj.play_game(lambda valid, n, ply, key: (ply * a + b) % jnp.maximum(n, 1), jax.random.PRNGKey(0), max_plies=150)
 
-    w, p = (np.asarray(x) for x in play(a, b))
+    w, p, _ = (np.asarray(x) for x in play(a, b))
     bad = sum(1 for e, ww, pp in zip(expect, w, p) if (e[2], e[3]) != (int(ww), int(pp)))
     kinds = {k: int((w == k).sum()) for k in (-1, 0, 1)}
     early = int((p < 150).sum())
