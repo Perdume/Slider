@@ -9,6 +9,7 @@
 //! 사용법:
 //!   trainnet --data a.jsonl,b.jsonl --weights weights.json --out net.txt
 //! 옵션: --data (쉼표로 여러 개) --weights (기본 default) --out --epochs 40 --batch 256 --lr 0.003
+//!       --stop-file 경로 / --parent-pid N  멈춤 신호 (멈추면 그때까지의 최선을 저장)
 //!       --lambda 0.5 --k 400 --l2 0.0001 --seed 1 --init 이어서 학습할 신경망 파일
 
 use std::collections::HashMap;
@@ -49,6 +50,7 @@ fn run() -> Result<(), String> {
     let k: f64 = cli::get(&opt, "k", 400.0)?;
     let l2: f32 = cli::get(&opt, "l2", 0.0001)?;
     let seed: u64 = cli::get(&opt, "seed", 1)?;
+    let stop = cli::Stop::from_options(&opt)?;
 
     let mut rows = Vec::new();
     for path in data.split(',') {
@@ -81,6 +83,10 @@ fn run() -> Result<(), String> {
     let mut order: Vec<usize> = (0..train.len()).collect();
     let mut rng = seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1;
     for epoch in 1..=epochs {
+        if stop.should_stop() {
+            println!("중단됨: epoch {} 에서 멈춤", epoch - 1);
+            break;
+        }
         shuffle(&mut order, &mut rng);
         let mut train_loss = 0.0f64;
         for chunk in order.chunks(batch) {

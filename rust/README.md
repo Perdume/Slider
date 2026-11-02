@@ -86,3 +86,22 @@ Colab 에서는 `colab/slider_nnue_training.ipynb` 가 위 과정을 라운드�
 - 평가 점수와 판 결과의 상관이 거의 0(0.016)이라서 판 결과는 노이즈가 많은 목표다. 그래서 기본값은 `--lambda 1.0`.
 - 대국에서 지는 이유는 알아내지 못했다. 데이터가 더 많으면 달라질 수도, 아닐 수도 있다.
   노트북의 채택 기준(대국 점수 0.55 이상)이 이런 신경망을 걸러 낸다.
+
+## 학습 루프 한 번에 돌리기 (`trainloop`)
+
+자가대전 → 학습 → 대국 확인을 한 프로세스가 라운드로 반복한다. 대국 점수가 `--accept`(기본 0.55) 이상일 때만 신경망을 채택하고
+`<work>/net.txt`, `<work>/summary.txt` 에 기록한다. 다음 라운드는 채택된 신경망으로 자가대전을 한다.
+
+```bash
+cargo build --release
+target/release/trainloop --work-dir work --rounds 2 --games 600 --time-ms 30 --epochs 40 --match-games 200 --match-time-ms 50 [--weights weights.json]
+```
+
+멈추려면 `--stop-file <경로>` 를 만들거나(판/epoch 사이에서 깨끗하게 끝난다), 부모 프로세스가 죽으면 같이 끝나게 `--parent-pid` 를 쓴다.
+Android 앱은 이 둘을 써서 `trainloop` 을 돌린다.
+
+## 폰에서 학습 (Android)
+
+`android/` 에 이 루프를 폰에서 돌리는 앱이 있다 (`android/README.md`). **NPU/GPU 는 쓰지 않는다.** 시간은 거의 다 탐색(정수 비트보드 연산)에 들고,
+신경망은 파라미터가 4,800개 남짓이라 학습 비용이 무시할 만하다. 그래서 CPU 코어를 전부 쓰는 쪽(스레드 수 = 코어 - 1)으로 만들었다.
+**실제 기기에서는 아직 실행해 보지 못했다** (이 환경에 기기/에뮬레이터가 없다).

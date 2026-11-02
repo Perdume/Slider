@@ -4,6 +4,7 @@
 //! 사용법:
 //!   matchup --a weights.json --b default --games 100 --time-ms 50
 //! 옵션: --net-a --net-b 쪽별 신경망 파일 (없으면 선형 평가만)
+//!       --stop-file 경로 / --parent-pid N  멈춤 신호 (멈추면 RESULT 줄 없이 끝난다)
 //!       --a --b (JSON 경로 또는 default) --games (짝수로 올림) --time-ms --depth --random-plies --max-plies --threads --seed
 
 use std::path::Path;
@@ -35,6 +36,7 @@ fn run() -> Result<(), String> {
     };
     let net_a = load_net("net-a")?;
     let net_b = load_net("net-b")?;
+    let stop = cli::Stop::from_options(&opt)?;
     let games: usize = cli::get(&opt, "games", 100)?;
     let pairs = (games + 1) / 2;
     let threads: usize = cli::get(&opt, "threads", cli::default_threads())?.max(1);
@@ -63,6 +65,9 @@ fn run() -> Result<(), String> {
     std::thread::scope(|scope| {
         for _ in 0..threads {
             scope.spawn(|| loop {
+                if stop.should_stop() {
+                    break;
+                }
                 let pair = next_pair.fetch_add(1, Ordering::SeqCst);
                 if pair >= pairs {
                     break;
@@ -77,6 +82,10 @@ fn run() -> Result<(), String> {
         }
     });
 
+    if stop.should_stop() {
+        println!("중단됨");
+        return Ok(());
+    }
     let games = pairs * 2;
     let (aw, dw, bw) = (a_wins.load(Ordering::SeqCst), draws.load(Ordering::SeqCst), b_wins.load(Ordering::SeqCst));
     let score = (aw as f64 + 0.5 * dw as f64) / games as f64;

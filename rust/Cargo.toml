@@ -18,6 +18,10 @@ name = "trainnet"
 path = "src/bin/trainnet.rs"
 
 [[bin]]
+name = "trainloop"
+path = "src/bin/trainloop.rs"
+
+[[bin]]
 name = "matchup"
 path = "src/bin/matchup.rs"
 

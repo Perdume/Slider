@@ -7,6 +7,7 @@
 //!   selfplay --games 200 --time-ms 30 --out data/selfplay.jsonl
 //! 옵션: --games --time-ms --depth --random-plies --epsilon --max-plies --threads --seed --weights --out
 //!       --net 신경망 파일 (있으면 평가에 더한다)
+//!       --stop-file 경로 / --parent-pid N  멈춤 신호 (cli::Stop 참고)
 //!       --positions yes  각 줄에 국면(tiles, me, opp)도 기록한다 (신경망 학습용. 기본은 기록하지 않음)
 
 use std::fs::File;
@@ -34,6 +35,7 @@ fn main() {
 fn run() -> Result<(), String> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let opt = cli::parse_args(&args)?;
+    let stop = cli::Stop::from_options(&opt)?;
     let games: usize = cli::get(&opt, "games", 200)?;
     let threads: usize = cli::get(&opt, "threads", cli::default_threads())?.max(1);
     let seed: i64 = cli::get(&opt, "seed", 1)?;
@@ -75,6 +77,9 @@ fn run() -> Result<(), String> {
     std::thread::scope(|scope| {
         for _ in 0..threads {
             scope.spawn(|| loop {
+                if stop.should_stop() {
+                    break;
+                }
                 let game_id = next_game.fetch_add(1, Ordering::SeqCst);
                 if game_id >= games {
                     break;
@@ -105,6 +110,9 @@ fn run() -> Result<(), String> {
         }
     });
     writer.lock().unwrap().flush().map_err(|e| e.to_string())?;
+    if stop.should_stop() {
+        println!("중단됨: {}판까지 기록", finished.load(Ordering::SeqCst));
+    }
     println!(
         "끝: 먼저 둔 쪽 {}승 / 무승부 {} / 나중 쪽 {}승, 국면 {}개 -> {}",
         tally[0].load(Ordering::SeqCst),
