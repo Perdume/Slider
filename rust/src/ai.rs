@@ -9,10 +9,32 @@
 //! 그래서 안전한 수들 중에서는 "상대가 직접적인 위협에만 반응한다"고 가정한 탐색으로 공격 계획을 세운다.
 
 use std::collections::HashMap;
+use std::hash::{BuildHasherDefault, Hasher};
 use std::time::{Duration, Instant};
 
 use crate::bitboard::{self as bb, CELLS, GOAL, MAX_MOVES};
 use crate::weights::{self, EvalWeights};
+
+/// 키가 이미 `position_hash` 로 섞인 값이라 다시 섞지 않고 그대로 쓰는 해셔 (기본 SipHash 는 노드마다 부르기엔 느리다)
+#[derive(Default, Clone, Copy)]
+pub struct IdentityHasher(u64);
+
+impl Hasher for IdentityHasher {
+    fn finish(&self) -> u64 {
+        self.0
+    }
+    fn write(&mut self, bytes: &[u8]) {
+        for &b in bytes {
+            self.0 = (self.0 << 8) | b as u64;
+        }
+    }
+    fn write_u64(&mut self, v: u64) {
+        self.0 = v;
+    }
+}
+
+/// 실제 게임에서 나온 국면의 횟수. 키는 `position_hash` 값.
+pub type History = HashMap<u64, u32, BuildHasherDefault<IdentityHasher>>;
 
 pub const WIN: i32 = 100_000;
 pub const WIN_BOUND: i32 = WIN - 1_000;
@@ -119,14 +141,8 @@ pub struct SliderAi {
     weights: [i32; weights::COUNT],
     feature: [i32; weights::COUNT],
 
-    tt_tiles: Vec<u64>,
-    tt_me: Vec<u64>,
-    tt_opp: Vec<u64>,
-    tt_score: Vec<i32>,
-    tt_move: Vec<i32>,
-    tt_depth: Vec<i8>,
-    tt_flag: Vec<u8>,
-    tt_mode: Vec<u8>,
+    /// 트랜스포지션 테이블. 칸 하나 = [tiles, me, opp, score | move << 32, depth | flag << 8 | mode << 16]
+    tt: Vec<[u64; 5]>,
 
     moves: Vec<Vec<i32>>,
     keys: Vec<Vec<i32>>,
@@ -138,7 +154,7 @@ pub struct SliderAi {
     path: [u64; MAX_PLY + 1],
 
     /// 실제 게임에서 이미 나온 국면의 횟수 (position_hash 기준). 3번째 반복은 무승부다.
-    game_history: HashMap<u64, u32>,
+    game_history: History,
 
     deadline: Instant,
     nodes: u64,
@@ -182,14 +198,7 @@ impl SliderAi {
             weights: w.values,
             feature: [0; weights::COUNT],
             // vec![0; n] 은 0으로 채운 메모리를 운영체제에서 바로 받아서, 쓰지 않은 칸은 실제로 건드리지 않는다
-            tt_tiles: vec![0; TT_SIZE],
-            tt_me: vec![0; TT_SIZE],
-            tt_opp: vec![0; TT_SIZE],
-            tt_score: vec![0; TT_SIZE],
-            tt_move: vec![0; TT_SIZE],
-            tt_depth: vec![0; TT_SIZE],
-            tt_flag: vec![0; TT_SIZE],
-            tt_mode: vec![0; TT_SIZE],
+            tt: vec![[0; 5]; TT_SIZE],
             moves: (0..MAX_PLY).map(|_| vec![0; MAX_MOVES]).collect(),
             keys: (0..MAX_PLY).map(|_| vec![0; MAX_MOVES]).collect(),
             killers: [[0; 2]; MAX_PLY],
@@ -197,7 +206,7 @@ impl SliderAi {
             scratch: vec![0; MAX_MOVES],
             back_cost: [0; 4],
             path: [0; MAX_PLY + 1],
-            game_history: HashMap::new(),
+            game_history: History::default(),
             deadline: Instant::now(),
             nodes: 0,
             aborted: false,
@@ -207,7 +216,7 @@ impl SliderAi {
     }
 
     /// 실제 게임에서 지금까지 나온 국면과 횟수. 키는 position_hash(tiles, 둘 차례인 쪽 말, 반대편 말).
-    pub fn set_game_history(&mut self, history: HashMap<u64, u32>) {
+    pub fn set_game_history(&mut self, history: History) {
         self.game_history = history;
     }
 
@@ -374,11 +383,12 @@ impl SliderAi {
         };
         let idx = (mix(hash.wrapping_add(mode as u64)) as usize) & (TT_SIZE - 1);
         let mut tt_best = -1;
-        if self.tt_me[idx] == me && self.tt_opp[idx] == opp && self.tt_tiles[idx] == tiles && self.tt_mode[idx] as i32 == mode {
-            tt_best = self.tt_move[idx];
-            if self.tt_depth[idx] as i32 >= depth {
-                let s = from_tt(self.tt_score[idx], ply as i32);
-                let flag = self.tt_flag[idx];
+        let entry = self.tt[idx];
+        if entry[1] == me && entry[2] == opp && entry[0] == tiles && ((entry[4] >> 16) & 0xff) as i32 == mode {
+            tt_best = (entry[3] >> 32) as u32 as i32;
+            if (entry[4] & 0xff) as u8 as i8 as i32 >= depth {
+                let s = from_tt(entry[3] as u32 as i32, ply as i32);
+                let flag = ((entry[4] >> 8) & 0xff) as u8;
                 if flag == EXACT || (flag == LOWER && s >= beta) || (flag == UPPER && s <= alpha) {
                     return s;
                 }
@@ -471,20 +481,20 @@ impl SliderAi {
             }
         }
 
-        self.tt_tiles[idx] = tiles;
-        self.tt_me[idx] = me;
-        self.tt_opp[idx] = opp;
-        self.tt_mode[idx] = mode as u8;
-        self.tt_score[idx] = to_tt(best, ply as i32);
-        self.tt_move[idx] = best_move;
-        self.tt_depth[idx] = depth as i8;
-        self.tt_flag[idx] = if best <= orig_alpha {
+        let flag = if best <= orig_alpha {
             UPPER
         } else if best >= beta {
             LOWER
         } else {
             EXACT
         };
+        self.tt[idx] = [
+            tiles,
+            me,
+            opp,
+            to_tt(best, ply as i32) as u32 as u64 | (best_move as u32 as u64) << 32,
+            (depth as i8 as u8 as u64) | (flag as u64) << 8 | (mode as u8 as u64) << 16,
+        ];
         best
     }
 

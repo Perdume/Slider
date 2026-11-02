@@ -3,9 +3,7 @@
 //! 둘 수 있는 수가 없으면 차례 넘김, 같은 국면 3번째 반복은 무승부.
 //! 쪽(side) 0 이 먼저 두고 위쪽 귀퉁이에서, 쪽 1 이 아래쪽 귀퉁이에서 시작한다.
 
-use std::collections::HashMap;
-
-use crate::ai::{position_hash, SliderAi};
+use crate::ai::{position_hash, History, SliderAi};
 use crate::bitboard::{self as bb, GOAL, MAX_MOVES};
 use crate::javarandom::JavaRandom;
 use crate::weights::{self, EvalWeights};
@@ -76,7 +74,7 @@ pub fn play(
     let mut opening = JavaRandom::new(opening_seed);
     let mut tiles = bb::from_array(&START_BOARD);
     let mut pieces = [bb::pieces(&SIDE0_START), bb::pieces(&SIDE1_START)];
-    let mut counts: HashMap<u64, u32> = HashMap::new();
+    let mut counts = History::default();
     *counts.entry(position_hash(tiles, pieces[0], pieces[1])).or_insert(0) += 1;
     let mut samples: Vec<Sample> = Vec::new();
     let mut buffer = vec![0i32; MAX_MOVES];
