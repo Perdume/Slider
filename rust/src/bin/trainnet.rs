@@ -11,12 +11,13 @@
 //! 옵션: --data (쉼표로 여러 개) --weights (기본 default) --out --epochs 40 --batch 256 --lr 0.003
 //!       --stop-file 경로 / --parent-pid N  멈춤 신호 (멈추면 그때까지의 최선을 저장)
 //!       --lambda 0.5 --k 400 --l2 0.0001 --seed 1 --init 이어서 학습할 신경망 파일
+//!       --features yes  선형 평가 특징 11개도 신경망 입력으로 넣는다 (파일 형식 2). 기본 no. --init 을 주면 그 파일을 따른다
 
 use std::collections::HashMap;
 use std::path::Path;
 
 use slider::cli;
-use slider::nnue::{self, Network, HIDDEN, INPUTS, MAX_ACTIVE, OUT_SCALE, PARAMS};
+use slider::nnue::{self, Network, FEATURES, HIDDEN, MAX_ACTIVE, OUT_SCALE};
 use slider::weights::{self, EvalWeights};
 
 /// 탐색이 승패를 확정한 국면은 학습에서 뺀다
@@ -25,6 +26,7 @@ const SOLVED: f64 = 50_000.0;
 struct Row {
     game: usize,
     active: Vec<u16>,
+    feats: [f32; FEATURES],
     lin: f32,
     score: f32,
     outcome: f32,
@@ -51,6 +53,11 @@ fn run() -> Result<(), String> {
     let l2: f32 = cli::get(&opt, "l2", 0.0001)?;
     let seed: u64 = cli::get(&opt, "seed", 1)?;
     let stop = cli::Stop::from_options(&opt)?;
+    let use_features = match opt.get("features").map(String::as_str) {
+        None | Some("no") => false,
+        Some("yes") => true,
+        Some(x) => return Err(format!("--features 는 yes 또는 no 입니다: {}", x)),
+    };
 
     let mut rows = Vec::new();
     for path in data.split(',') {
@@ -73,13 +80,14 @@ fn run() -> Result<(), String> {
 
     let mut net = match opt.get("init") {
         Some(path) => Network::load(Path::new(path))?,
-        None => Network::new(seed),
+        None => Network::new(seed, use_features),
     };
+    println!("신경망: 위치 입력 {}개{} -> 은닉 {} -> 1 (파라미터 {}개)", nnue::INPUTS, if net.features { format!(" + 특징 {}개", FEATURES) } else { String::new() }, HIDDEN, net.params.len());
     let base_valid = mean_loss(&valid, None, k, &target);
     println!("검증 손실: 선형 평가만 {:.5}  (판 결과 상관 {:.3})", base_valid, corr_with_outcome(&valid));
 
     let mut best = (mean_loss(&valid, Some(&net), k, &target), net.clone(), 0usize);
-    let mut adam = Adam::new();
+    let mut adam = Adam::new(net.params.len());
     let mut order: Vec<usize> = (0..train.len()).collect();
     let mut rng = seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1;
     for epoch in 1..=epochs {
@@ -90,7 +98,7 @@ fn run() -> Result<(), String> {
         shuffle(&mut order, &mut rng);
         let mut train_loss = 0.0f64;
         for chunk in order.chunks(batch) {
-            let mut grad = vec![0.0f32; PARAMS];
+            let mut grad = vec![0.0f32; net.params.len()];
             for &i in chunk {
                 let r = train[i];
                 train_loss += backprop(&net, r, k, target(r), &mut grad);
@@ -100,9 +108,9 @@ fn run() -> Result<(), String> {
                 *g *= scale;
             }
             if l2 > 0.0 {
-                let w1_end = INPUTS * HIDDEN;
-                let w2_start = w1_end + HIDDEN;
-                for i in (0..w1_end).chain(w2_start..w2_start + HIDDEN) {
+                // 첫 층(w1, wf)과 출력층 w2 에만 건다 (편향 제외)
+                let (b1, w2) = (net.b1_offset(), net.w2_offset());
+                for i in (0..b1).chain(w2..w2 + HIDDEN) {
                     grad[i] += l2 * net.params[i];
                 }
             }
@@ -137,7 +145,7 @@ fn sigmoid(x: f64) -> f64 {
 /// 한 국면의 손실을 더하고 기울기를 grad 에 쌓는다. 손실값을 돌려준다.
 fn backprop(net: &Network, r: &Row, k: f64, t: f32, grad: &mut [f32]) -> f64 {
     let mut acc = [0.0f32; HIDDEN];
-    net.accumulate(&r.active, &mut acc);
+    net.accumulate(&r.active, &r.feats, &mut acc);
     let out = net.output(&acc);
     let p = sigmoid(((r.lin + out * OUT_SCALE) as f64) / k) as f32;
     let loss = ((p - t) * (p - t)) as f64;
@@ -145,16 +153,23 @@ fn backprop(net: &Network, r: &Row, k: f64, t: f32, grad: &mut [f32]) -> f64 {
     let d = 2.0 * (p - t) * p * (1.0 - p) * OUT_SCALE / k as f32;
 
     let w2 = net.w2();
-    let (w1_end, b1_end, w2_end) = (INPUTS * HIDDEN, INPUTS * HIDDEN + HIDDEN, INPUTS * HIDDEN + 2 * HIDDEN);
-    grad[w2_end] += d; // b2
+    let (wf, b1, w2o, b2) = (net.wf_offset(), net.b1_offset(), net.w2_offset(), net.b2_offset());
+    grad[b2] += d;
     for j in 0..HIDDEN {
         let h = acc[j].clamp(0.0, 1.0);
-        grad[b1_end + j] += d * h; // w2
+        grad[w2o + j] += d * h;
         if acc[j] > 0.0 && acc[j] < 1.0 {
             let da = d * w2[j];
-            grad[w1_end + j] += da; // b1
+            grad[b1 + j] += da;
             for &i in &r.active {
                 grad[i as usize * HIDDEN + j] += da; // w1
+            }
+            if net.features {
+                for f in 0..FEATURES {
+                    if r.feats[f] != 0.0 {
+                        grad[wf + f * HIDDEN + j] += da * r.feats[f]; // wf
+                    }
+                }
             }
         }
     }
@@ -167,7 +182,7 @@ fn mean_loss(rows: &[&Row], net: Option<&Network>, k: f64, target: &dyn Fn(&Row)
         let out = match net {
             Some(n) => {
                 let mut acc = [0.0f32; HIDDEN];
-                n.accumulate(&r.active, &mut acc);
+                n.accumulate(&r.active, &r.feats, &mut acc);
                 n.output(&acc)
             }
             None => 0.0,
@@ -224,8 +239,8 @@ struct Adam {
 }
 
 impl Adam {
-    fn new() -> Self {
-        Adam { m: vec![0.0; PARAMS], v: vec![0.0; PARAMS], t: 0 }
+    fn new(n: usize) -> Self {
+        Adam { m: vec![0.0; n], v: vec![0.0; n], t: 0 }
     }
 
     fn step(&mut self, params: &mut [f32], grad: &[f32], lr: f32) {
@@ -278,6 +293,10 @@ fn load_rows(path: &str, weights: &EvalWeights) -> Result<Vec<Row>, String> {
             return Err(format!("{}:{}: features 개수가 {} 가 아닙니다", path, n + 1, weights::COUNT));
         }
         let lin: f64 = features.iter().zip(weights.values.iter()).map(|(f, w)| f * *w as f64).sum();
+        let mut ints = [0i32; weights::COUNT];
+        for (dst, &v) in ints.iter_mut().zip(features.iter()) {
+            *dst = v as i32;
+        }
         let (tiles, me, opp) = (get("tiles")? as u64, get("me")? as u64, get("opp")? as u64);
         let mut buf = [0u16; MAX_ACTIVE];
         let count = nnue::active_inputs(tiles, me, opp, &mut buf);
@@ -285,6 +304,7 @@ fn load_rows(path: &str, weights: &EvalWeights) -> Result<Vec<Row>, String> {
             // game 번호는 파일마다 0부터 시작하므로 파일을 구분하려고 큰 수를 더하지 않고 그대로 쓴다 (80/20 분할용)
             game: get("game")? as usize,
             active: buf[..count].to_vec(),
+            feats: nnue::scale_features(&ints),
             lin: lin as f32,
             score: score as f32,
             outcome: get("outcome")? as f32,
@@ -344,39 +364,65 @@ mod tests {
 
     fn sample_row() -> Row {
         // 시작 국면과 비슷한 입력 몇 개
-        Row { game: 0, active: vec![0, 1, 5, 6, 43, 48, 49 + 0, 49 + 6, 98 + 42, 98 + 48], lin: 35.0, score: 20.0, outcome: 1.0 }
+        Row {
+            game: 0,
+            active: vec![0, 1, 5, 6, 43, 48, 49 + 0, 49 + 6, 98 + 42, 98 + 48],
+            feats: nnue::scale_features(&[1, 0, 0, 3, -2, 1, 2, 0, -1, 4, 1]),
+            lin: 35.0,
+            score: 20.0,
+            outcome: 1.0,
+        }
     }
 
     /// 역전파한 기울기가 수치 미분(중앙 차분)과 맞는지 본다.
     #[test]
     fn backprop_matches_numerical_gradient() {
-        let mut net = Network::new(9);
+        for features in [false, true] {
+            check_gradient(features);
+        }
+    }
+
+    fn check_gradient(features: bool) {
+        let mut net = Network::new(9, features);
         // 출력층을 0이 아니게 해서 첫 층까지 기울기가 흐르게 한다
-        let w2_start = INPUTS * HIDDEN + HIDDEN;
+        let w2_start = net.w2_offset();
         for j in 0..HIDDEN {
             net.params[w2_start + j] = 0.3 - 0.02 * (j % 32) as f32; // 은닉 수가 커도 출력이 포화하지 않게 32마다 반복
         }
-        net.params[PARAMS - 1] = 0.05;
+        let last = net.params.len() - 1;
+        net.params[last] = 0.05;
         let r = sample_row();
         let (k, t) = (200.0, 0.7f32);
 
-        let mut grad = vec![0.0f32; PARAMS];
+        let mut grad = vec![0.0f32; net.params.len()];
         backprop(&net, &r, k, t, &mut grad);
 
         let loss_at = |n: &Network| -> f64 {
-            let mut g = vec![0.0f32; PARAMS];
+            let mut g = vec![0.0f32; n.params.len()];
             backprop(n, &r, k, t, &mut g)
         };
         let eps = 1e-3f32;
         let mut checked = 0;
-        // 활성 입력의 w1, b1, w2, b2 에서 골고루 확인한다
+        // 활성 입력의 w1, (특징의 wf), b1, w2, b2 에서 골고루 확인한다
+        let units = [3, 5, 9, 12, 17, 21, 30];
         let mut indices: Vec<usize> = Vec::new();
         for &i in &r.active {
-            for j in [3, 5, 9, 12, 17, 21, 30] {
+            for j in units {
                 indices.push(i as usize * HIDDEN + j);
             }
         }
-        indices.extend([INPUTS * HIDDEN + 3, INPUTS * HIDDEN + 20, w2_start + 3, w2_start + 20, PARAMS - 1]);
+        if features {
+            for f in 0..FEATURES {
+                if r.feats[f] != 0.0 {
+                    for j in units {
+                        indices.push(net.wf_offset() + f * HIDDEN + j);
+                    }
+                }
+            }
+        }
+        let b1 = net.b1_offset();
+        indices.extend([b1 + 3, b1 + 20, w2_start + 3, w2_start + 20, last]);
+        let mut checked_wf = 0;
         for idx in indices {
             let mut plus = net.clone();
             plus.params[idx] += eps;
@@ -385,12 +431,16 @@ mod tests {
             let numeric = (loss_at(&plus) - loss_at(&minus)) / (2.0 * eps as f64);
             let analytic = grad[idx] as f64;
             let tol = 1e-4 + 0.05 * numeric.abs().max(analytic.abs());
-            assert!((numeric - analytic).abs() <= tol, "param {}: numeric {} vs analytic {}", idx, numeric, analytic);
+            assert!((numeric - analytic).abs() <= tol, "features={} param {}: numeric {} vs analytic {}", features, idx, numeric, analytic);
             if analytic.abs() > 1e-7 {
                 checked += 1;
+                if features && idx >= net.wf_offset() && idx < b1 {
+                    checked_wf += 1;
+                }
             }
         }
         assert!(checked >= 6, "기울기가 0이 아닌 비교 대상이 너무 적습니다: {}", checked);
+        assert!(!features || checked_wf >= 3, "특징 가중치(wf) 확인이 너무 적습니다: {}", checked_wf);
     }
 
     #[test]

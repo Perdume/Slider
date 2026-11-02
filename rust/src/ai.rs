@@ -516,7 +516,7 @@ impl SliderAi {
             score += self.weights[i] * self.feature[i];
         }
         if let Some(net) = &self.net {
-            score += net.eval(tiles, me, opp);
+            score += net.eval(tiles, me, opp, &self.feature);
         }
         score
     }

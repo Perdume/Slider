@@ -73,6 +73,8 @@ pub fn hash(tiles: u64, me: u64, opp: u64) -> u64 {
 
 use std::path::Path;
 
+use crate::weights;
+
 /// 은닉 뉴런 수. 기본 32. 빌드할 때 환경 변수로 바꾼다: `SLIDER_HIDDEN=256 cargo build --release`
 /// (신경망 파일 머리말에 크기가 적혀 있어서, 크기가 다른 파일을 읽으면 오류가 난다.)
 pub const HIDDEN: usize = hidden_from_env();
@@ -96,59 +98,106 @@ const fn hidden_from_env() -> usize {
 /// 신경망 출력(-1..1 근처)을 평가 점수 단위로 바꾸는 배율
 pub const OUT_SCALE: f32 = 200.0;
 
-const W1: usize = 0;
-const B1: usize = W1 + INPUTS * HIDDEN;
-const W2: usize = B1 + HIDDEN;
-const B2: usize = W2 + HIDDEN;
-/// 전체 파라미터 개수
-pub const PARAMS: usize = B2 + 1;
+/// 선형 평가 특징(weights::NAMES 순서)을 신경망 입력으로도 넣을 때 곱하는 배율.
+/// 자가대전 데이터에서 본 값의 범위(99% 가 이 배율로 -1..1 근처)에 맞췄다. tempo 는 항상 1 이라 편향과 같으므로 0.
+pub const FEATURE_SCALE: [f32; weights::COUNT] = [1.0, 1.0, 0.5, 0.125, 0.25, 0.25, 0.25, 0.25, 0.25, 0.125, 0.0];
+/// 특징 입력 개수 (특징을 쓰는 신경망일 때)
+pub const FEATURES: usize = weights::COUNT;
 
-/// 파라미터를 한 배열에 모아 둔다: [w1 (입력 x 은닉) | b1 | w2 | b2]
+/// 정수 특징을 신경망 입력값으로 바꾼다.
+pub fn scale_features(f: &[i32; weights::COUNT]) -> [f32; FEATURES] {
+    let mut out = [0.0f32; FEATURES];
+    for i in 0..FEATURES {
+        out[i] = f[i] as f32 * FEATURE_SCALE[i];
+    }
+    out
+}
+
+/// 파라미터를 한 배열에 모아 둔다: [w1 (입력 x 은닉) | wf (특징 x 은닉, 특징을 쓸 때만) | b1 | w2 | b2]
+/// `features` 가 true 면 위치 입력 147개에 더해 선형 평가 특징 11개도 은닉층에 들어간다 (파일 형식 2).
 #[derive(Clone, Debug)]
 pub struct Network {
     pub params: Vec<f32>,
+    pub features: bool,
 }
 
 impl Network {
+    /// 전체 파라미터 개수
+    pub fn param_count(features: bool) -> usize {
+        INPUTS * HIDDEN + if features { FEATURES * HIDDEN } else { 0 } + 2 * HIDDEN + 1
+    }
+
     /// 첫 층은 작은 난수, 출력층은 0 (학습 전에는 출력이 항상 0).
-    pub fn new(seed: u64) -> Self {
-        let mut params = vec![0.0f32; PARAMS];
+    pub fn new(seed: u64, features: bool) -> Self {
+        let mut net = Network { params: vec![0.0f32; Self::param_count(features)], features };
         let mut state = seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1;
-        for p in params[W1..B1].iter_mut() {
+        let b1 = net.b1_offset();
+        for p in net.params[..b1].iter_mut() {
             state ^= state << 13;
             state ^= state >> 7;
             state ^= state << 17;
             *p = ((state >> 40) as f32 / (1u64 << 24) as f32 - 0.5) * 0.2; // -0.1 .. 0.1
         }
-        for p in params[B1..W2].iter_mut() {
+        for p in net.params[b1..b1 + HIDDEN].iter_mut() {
             *p = 0.1;
         }
-        Network { params }
+        net
+    }
+
+    pub fn wf_offset(&self) -> usize {
+        INPUTS * HIDDEN
+    }
+    pub fn b1_offset(&self) -> usize {
+        INPUTS * HIDDEN + if self.features { FEATURES * HIDDEN } else { 0 }
+    }
+    pub fn w2_offset(&self) -> usize {
+        self.b1_offset() + HIDDEN
+    }
+    pub fn b2_offset(&self) -> usize {
+        self.w2_offset() + HIDDEN
     }
 
     pub fn w1(&self, input: usize) -> &[f32] {
-        &self.params[W1 + input * HIDDEN..W1 + (input + 1) * HIDDEN]
+        &self.params[input * HIDDEN..(input + 1) * HIDDEN]
+    }
+
+    pub fn wf(&self, feature: usize) -> &[f32] {
+        let o = self.wf_offset() + feature * HIDDEN;
+        &self.params[o..o + HIDDEN]
     }
 
     pub fn b1(&self) -> &[f32] {
-        &self.params[B1..W2]
+        let o = self.b1_offset();
+        &self.params[o..o + HIDDEN]
     }
 
     pub fn w2(&self) -> &[f32] {
-        &self.params[W2..B2]
+        let o = self.w2_offset();
+        &self.params[o..o + HIDDEN]
     }
 
     pub fn b2(&self) -> f32 {
-        self.params[B2]
+        self.params[self.b2_offset()]
     }
 
-    /// 켜진 입력으로 은닉층의 입력값(합)을 새로 계산한다 (증분 갱신이 아니라 통째로 덮어쓴다).
-    pub fn accumulate(&self, active: &[u16], acc: &mut [f32; HIDDEN]) {
+    /// 켜진 입력(과 특징)으로 은닉층의 입력값(합)을 새로 계산한다 (증분 갱신이 아니라 통째로 덮어쓴다).
+    /// feats 는 특징을 쓰는 신경망일 때만 읽는다 (scale_features 의 결과).
+    pub fn accumulate(&self, active: &[u16], feats: &[f32; FEATURES], acc: &mut [f32; HIDDEN]) {
         acc.copy_from_slice(self.b1());
         for &i in active {
             let w = self.w1(i as usize);
             for j in 0..HIDDEN {
                 acc[j] += w[j];
+            }
+        }
+        if self.features {
+            for (f, &x) in feats.iter().enumerate() {
+                if x != 0.0 {
+                    let w = self.wf(f);
+                    for j in 0..HIDDEN {
+                        acc[j] += x * w[j];
+                    }
+                }
             }
         }
     }
@@ -163,18 +212,28 @@ impl Network {
         out
     }
 
-    /// 국면의 신경망 출력 (평가 점수 단위로 환산한 정수). 둘 차례인 쪽(me) 기준.
-    pub fn eval(&self, tiles: u64, me: u64, opp: u64) -> i32 {
+    /// 국면의 신경망 출력 (평가 점수 단위로 환산한 정수). 둘 차례인 쪽(me) 기준. features 는 같은 국면의 선형 평가 특징.
+    pub fn eval(&self, tiles: u64, me: u64, opp: u64, features: &[i32; weights::COUNT]) -> i32 {
         let mut active = [0u16; MAX_ACTIVE];
         let n = active_inputs(tiles, me, opp, &mut active);
         let mut acc = [0.0f32; HIDDEN];
-        self.accumulate(&active[..n], &mut acc);
+        self.accumulate(&active[..n], &scale_features(features), &mut acc);
         (self.output(&acc) * OUT_SCALE).round() as i32
     }
 
+    fn header(&self) -> String {
+        if self.features {
+            format!("SLIDERNET 2 {} {} {}", INPUTS, FEATURES, HIDDEN)
+        } else {
+            format!("SLIDERNET 1 {} {}", INPUTS, HIDDEN)
+        }
+    }
+
     /// 텍스트로 저장한다: 머리말 한 줄 + 파라미터 전체 (공백 구분, 값을 그대로 되살릴 수 있는 정밀도).
+    /// 형식 1: `SLIDERNET 1 입력 은닉`, 형식 2 (특징 입력 포함): `SLIDERNET 2 입력 특징 은닉`.
     pub fn to_text(&self) -> String {
-        let mut s = format!("SLIDERNET 1 {} {}\n", INPUTS, HIDDEN);
+        let mut s = self.header();
+        s.push('\n');
         let values: Vec<String> = self.params.iter().map(|v| format!("{:?}", v)).collect();
         s.push_str(&values.join(" "));
         s.push('\n');
@@ -183,19 +242,27 @@ impl Network {
 
     pub fn from_text(text: &str) -> Result<Self, String> {
         let mut lines = text.lines();
-        let header = lines.next().ok_or("빈 파일입니다")?;
-        let expected = format!("SLIDERNET 1 {} {}", INPUTS, HIDDEN);
-        if header.trim() != expected {
-            return Err(format!("신경망 파일 형식이 맞지 않습니다 (필요: '{}', 실제: '{}')", expected, header.trim()));
-        }
+        let header = lines.next().ok_or("빈 파일입니다")?.trim();
+        let header_of = |features: bool| Network { params: Vec::new(), features }.header();
+        let features = if header == header_of(false) {
+            false
+        } else if header == header_of(true) {
+            true
+        } else {
+            return Err(format!(
+                "신경망 파일 형식이 맞지 않습니다 (이 실행 파일이 읽는 것: 'SLIDERNET 1 {} {}' 또는 'SLIDERNET 2 {} {} {}', 실제: '{}'). 은닉 수가 다르면 SLIDER_HIDDEN 을 맞춰 다시 빌드하세요",
+                INPUTS, HIDDEN, INPUTS, FEATURES, HIDDEN, header
+            ));
+        };
         let params: Vec<f32> = lines
             .flat_map(|l| l.split_whitespace())
             .map(|t| t.parse::<f32>().map_err(|_| format!("숫자를 읽을 수 없습니다: {}", t)))
             .collect::<Result<_, _>>()?;
-        if params.len() != PARAMS {
-            return Err(format!("파라미터 개수가 맞지 않습니다: {} (필요 {})", params.len(), PARAMS));
+        let need = Self::param_count(features);
+        if params.len() != need {
+            return Err(format!("파라미터 개수가 맞지 않습니다: {} (필요 {})", params.len(), need));
         }
-        Ok(Network { params })
+        Ok(Network { params, features })
     }
 
     pub fn load(path: &Path) -> Result<Self, String> {
@@ -261,32 +328,59 @@ mod tests {
     #[test]
     fn fresh_network_outputs_zero_so_eval_is_unchanged() {
         let (t, a, b) = start();
-        assert_eq!(Network::new(1).eval(t, a, b), 0);
+        let f = [1, 0, 0, 3, -2, 1, 0, 2, 0, 5, 1];
+        assert_eq!(Network::new(1, false).eval(t, a, b, &f), 0);
+        assert_eq!(Network::new(1, true).eval(t, a, b, &f), 0);
     }
 
     #[test]
     fn network_text_round_trip_is_exact() {
-        let mut net = Network::new(3);
-        net.params[PARAMS - 1] = 0.123_456_79;
-        net.params[B2 - 1] = -1.5e-7;
-        let back = Network::from_text(&net.to_text()).unwrap();
-        assert_eq!(back.params, net.params);
+        for features in [false, true] {
+            let mut net = Network::new(3, features);
+            let n = net.params.len();
+            net.params[n - 1] = 0.123_456_79;
+            net.params[n - 2] = -1.5e-7;
+            let back = Network::from_text(&net.to_text()).unwrap();
+            assert_eq!(back.params, net.params);
+            assert_eq!(back.features, features);
+        }
     }
 
     #[test]
     fn wrong_header_or_size_is_rejected() {
         assert!(Network::from_text("SLIDERNET 1 3 3\n1 2 3").is_err());
         assert!(Network::from_text(&format!("SLIDERNET 1 {} {}\n1 2 3", INPUTS, HIDDEN)).is_err());
+        assert!(Network::from_text(&format!("SLIDERNET 2 {} {} {}\n1 2 3", INPUTS, FEATURES, HIDDEN)).is_err());
+        // 특징 없는 파일을 특징 있는 크기로 속일 수 없다
+        let plain = Network::new(1, false).to_text().replacen("SLIDERNET 1", "SLIDERNET 2", 1);
+        assert!(Network::from_text(&plain).is_err());
     }
 
     #[test]
     fn eval_reacts_to_the_board_once_output_weights_are_set() {
         let (t, a, b) = start();
-        let mut net = Network::new(5);
+        let f = [0; weights::COUNT];
+        let mut net = Network::new(5, false);
+        let w2 = net.w2_offset();
         for j in 0..HIDDEN {
-            net.params[W2 + j] = 0.5;
+            net.params[w2 + j] = 0.5;
         }
         // 출력층이 0이 아니면 은닉층(b1 = 0.1 이상)을 거쳐 출력이 0이 아니게 된다
-        assert_ne!(net.eval(t, a, b), 0);
+        assert_ne!(net.eval(t, a, b, &f), 0);
+    }
+
+    #[test]
+    fn feature_network_reacts_to_features_and_plain_network_ignores_them() {
+        let (t, a, b) = start();
+        let (f0, f1) = ([0; weights::COUNT], [1, 0, 0, 8, 4, 0, 0, 0, 0, 0, 1]);
+        for features in [false, true] {
+            let mut net = Network::new(7, features);
+            let w2 = net.w2_offset();
+            for j in 0..HIDDEN {
+                net.params[w2 + j] = 0.5;
+            }
+            let (e0, e1) = (net.eval(t, a, b, &f0), net.eval(t, a, b, &f1));
+            assert_eq!(e0 != e1, features, "features={} e0={} e1={}", features, e0, e1);
+        }
     }
 }
