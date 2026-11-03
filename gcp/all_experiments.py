@@ -51,6 +51,7 @@ SETTINGS = {
     "RUN_SEARCH": env("RUN_SEARCH", True),
     "RUN_TUNE": env("RUN_TUNE", True),
     "RUN_NN": env("RUN_NN", True),
+    "RUN_EXTRA": env("RUN_EXTRA", True),
 }
 S = SETTINGS
 THREADS = os.cpu_count() or 2
@@ -93,12 +94,12 @@ def fmt(r):
             f"({r['eloLow']:+.0f} ~ {r['eloHigh']:+.0f}), SPRT {r.get('sprt', '-')}")
 
 
-def sprt(key, a_args, b_args, limit=None, note=""):
+def sprt(key, a_args, b_args, limit=None, note="", max_games=None):
     if key in state:
         log(f"[{key}] 이미 끝남: {fmt(state[key])}")
         return state[key]
     limit = limit or ["--time-ms", S["MATCH_TIME_MS"]]
-    lines = run(BIN / "matchup", [*a_args, *b_args, "--games", S["SPRT_MAX_GAMES"], *limit, "--max-plies", S["MAX_PLIES"],
+    lines = run(BIN / "matchup", [*a_args, *b_args, "--games", max_games or S["SPRT_MAX_GAMES"], *limit, "--max-plies", S["MAX_PLIES"],
                                   "--sprt-elo0", S["SPRT_ELO0"], "--sprt-elo1", S["SPRT_ELO1"],
                                   "--threads", THREADS, "--seed", S["SEED"] + 1000])
     r = json.loads([l for l in lines if l.startswith("RESULT ")][-1][len("RESULT "):])
@@ -178,6 +179,22 @@ if S["RUN_NN"]:
     sprt("nn_depth", ["--a", W, "--net-a", net], ["--b", W], limit=["--time-ms", 100000, "--depth", S["NN_DEPTH"]],
          note=f"신경망, 깊이 {S['NN_DEPTH']} 고정")
     sprt("nn_time", ["--a", W, "--net-a", net], ["--b", W], note=f"신경망, 수당 {S['MATCH_TIME_MS']}ms")
+
+# ---------------------------------------------------------------- D. 2차 실험
+# 시간을 늘리면 결론이 바뀌는지: 시간 2배의 값(짧은/긴 시간), LMR 과 신경망을 긴 시간에서 다시, 신경망에 속도 손해만큼 시간 보정
+if S["RUN_EXTRA"]:
+    net = OUT / "data" / f"net_feat_{S['HIDDEN']}_{tune_data.stem}.txt"
+    t = lambda ms: ["--time-ms", ms]
+    sprt("time_60_vs_30", ["--a", W, "--time-ms-a", 60], ["--b", W, "--time-ms-b", 30], note="같은 엔진, 시간 2배 (60 vs 30ms)")
+    sprt("time_300_vs_150", ["--a", W, "--time-ms-a", 300], ["--b", W, "--time-ms-b", 150], note="같은 엔진, 시간 2배 (300 vs 150ms)",
+         max_games=600)
+    sprt("lmr2_vs_lmr", ["--a", W, "--opts-a", "lmr2"], ["--b", W, "--opts-b", "lmr"], note="더 센 LMR vs LMR (30ms)")
+    sprt("lmr_150ms", ["--a", W, "--opts-a", "lmr"], ["--b", W], limit=t(150), note="LMR vs 기본 (150ms)", max_games=800)
+    if net.exists():
+        sprt("nn_time_x1.6", ["--a", W, "--net-a", net, "--time-ms-a", 48], ["--b", W, "--time-ms-b", 30],
+             note="신경망에 시간 1.6배 (48 vs 30ms, 속도 손해 보정)")
+        sprt("nn_150ms", ["--a", W, "--net-a", net], ["--b", W], limit=t(150), note="신경망 vs 선형 (150ms)", max_games=800)
+        sprt("nn_300ms", ["--a", W, "--net-a", net], ["--b", W], limit=t(300), note="신경망 vs 선형 (300ms)", max_games=400)
 
 # ---------------------------------------------------------------- 요약
 lines = [f"설정: {SETTINGS} | threads {THREADS} | 이번 실행 {time.time() - t_start:.0f}초"]

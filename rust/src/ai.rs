@@ -145,6 +145,8 @@ pub struct SearchOptions {
     pub pvs: bool,
     /// LMR: 정렬에서 뒤쪽인 조용한 수(TT/킬러가 아닌 4번째 이후)는 한 단계 얕게 먼저 보고, 좋아 보이면 다시 탐색한다
     pub lmr: bool,
+    /// LMR 을 더 세게: 깊이 5 이상에서 7번째 이후 수는 2단계 줄인다 (lmr 을 켠 것으로 친다)
+    pub lmr2: bool,
     /// 널무브: 한 수 쉬어도(차례를 넘겨도) 충분히 좋으면 더 보지 않고 자른다 (상대가 바로 이길 수 있는 국면에서는 안 씀)
     pub nmp: bool,
 }
@@ -157,8 +159,12 @@ impl SearchOptions {
             match part {
                 "pvs" => o.pvs = true,
                 "lmr" => o.lmr = true,
+                "lmr2" => {
+                    o.lmr = true;
+                    o.lmr2 = true;
+                }
                 "nmp" => o.nmp = true,
-                other => return Err(format!("알 수 없는 탐색 옵션: {} (pvs, lmr, nmp 중에서)", other)),
+                other => return Err(format!("알 수 없는 탐색 옵션: {} (pvs, lmr, lmr2, nmp 중에서)", other)),
             }
         }
         Ok(o)
@@ -171,7 +177,9 @@ impl std::fmt::Display for SearchOptions {
         if self.pvs {
             parts.push("pvs");
         }
-        if self.lmr {
+        if self.lmr2 {
+            parts.push("lmr2");
+        } else if self.lmr {
             parts.push("lmr");
         }
         if self.nmp {
@@ -581,7 +589,11 @@ impl SliderAi {
     fn search_later_move(&mut self, tiles: u64, me: u64, opp: u64, depth: i32, alpha: i32, beta: i32, ply: usize, index: usize, key: i32) -> i32 {
         // 여기서 me 는 수를 둔 뒤 둘 차례가 된 쪽 (상대), opp 는 방금 둔 쪽
         let quiet = key < (1 << 28); // TT 최선수/킬러가 아님
-        let reduce = if self.opts.lmr && depth >= 3 && index >= 3 && quiet { 1 } else { 0 };
+        let reduce = if self.opts.lmr && depth >= 3 && index >= 3 && quiet {
+            if self.opts.lmr2 && depth >= 5 && index >= 6 { 2 } else { 1 }
+        } else {
+            0
+        };
         if reduce > 0 {
             let v = -self.negamax(tiles, me, opp, depth - 1 - reduce, -alpha - 1, -alpha, ply + 1);
             if self.aborted || v <= alpha {

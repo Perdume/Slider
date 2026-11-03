@@ -4,7 +4,8 @@
 //! 사용법:
 //!   matchup --a weights.json --b default --games 100 --time-ms 50
 //! 옵션: --net-a --net-b 쪽별 신경망 파일 (없으면 선형 평가만)
-//!       --opts-a --opts-b 쪽별 탐색 개선 선택지 (쉼표 목록: pvs,lmr,nmp. 기본은 모두 끔)
+//!       --opts-a --opts-b 쪽별 탐색 개선 선택지 (쉼표 목록: pvs,lmr,lmr2,nmp. 기본은 모두 끔)
+//!       --time-ms-a --time-ms-b 쪽별 수당 시간 (없으면 --time-ms)
 //!       --stop-file 경로 / --parent-pid N  멈춤 신호 (멈추면 RESULT 줄 없이 끝난다)
 //!       --a --b (JSON 경로 또는 default) --games (짝수로 올림) --time-ms --depth --random-plies --max-plies --threads --seed
 //!       --sprt-elo0 0 --sprt-elo1 20 [--sprt-alpha 0.05 --sprt-beta 0.05]
@@ -43,6 +44,16 @@ fn run() -> Result<(), String> {
     let net_b = load_net("net-b")?;
     let opts_a = SearchOptions::parse(opt.get("opts-a").map(String::as_str).unwrap_or(""))?;
     let opts_b = SearchOptions::parse(opt.get("opts-b").map(String::as_str).unwrap_or(""))?;
+    let side_time = |key: &str| -> Result<Option<u64>, String> {
+        match opt.get(key) {
+            Some(v) => v.parse::<u64>().map(Some).map_err(|_| format!("--{} 는 숫자여야 합니다: {}", key, v)),
+            None => Ok(None),
+        }
+    };
+    let (time_a, time_b) = (side_time("time-ms-a")?, side_time("time-ms-b")?);
+    if time_a.is_some() || time_b.is_some() {
+        println!("수당 시간: A {}ms / B {}ms", time_a.unwrap_or(0), time_b.unwrap_or(0));
+    }
     let stop = cli::Stop::from_options(&opt)?;
     let games: usize = cli::get(&opt, "games", 100)?;
     let pairs = (games + 1) / 2;
@@ -84,8 +95,8 @@ fn run() -> Result<(), String> {
     if opts_a != SearchOptions::default() || opts_b != SearchOptions::default() {
         println!("탐색: A {} / B {}", opts_a, opts_b);
     }
-    let pa = Player::new(a.clone(), net_a).with_options(opts_a);
-    let pb = Player::new(b.clone(), net_b).with_options(opts_b);
+    let pa = Player::new(a.clone(), net_a).with_options(opts_a).with_time(time_a);
+    let pb = Player::new(b.clone(), net_b).with_options(opts_b).with_time(time_b);
     let ab = [pa.clone(), pb.clone()];
     let ba = [pb, pa];
 

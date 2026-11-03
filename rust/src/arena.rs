@@ -29,15 +29,22 @@ pub struct Player {
     pub weights: EvalWeights,
     pub net: Option<Arc<Network>>,
     pub opts: SearchOptions,
+    /// 이 쪽만 다른 수당 시간을 쓸 때 (None 이면 Config 의 시간)
+    pub time_ms: Option<u64>,
 }
 
 impl Player {
     pub fn new(weights: EvalWeights, net: Option<Arc<Network>>) -> Self {
-        Player { weights, net, opts: SearchOptions::default() }
+        Player { weights, net, opts: SearchOptions::default(), time_ms: None }
     }
 
     pub fn with_options(mut self, opts: SearchOptions) -> Self {
         self.opts = opts;
+        self
+    }
+
+    pub fn with_time(mut self, time_ms: Option<u64>) -> Self {
+        self.time_ms = time_ms;
         self
     }
 }
@@ -117,7 +124,7 @@ pub fn play(
             if ply < cfg.random_plies {
                 mv = buffer[opening.next_int(n as i32) as usize];
             } else {
-                let mut engine = SliderAi::with_weights(cfg.time_ms, cfg.max_depth, &players[side].weights);
+                let mut engine = SliderAi::with_weights(players[side].time_ms.unwrap_or(cfg.time_ms), cfg.max_depth, &players[side].weights);
                 engine.set_net(players[side].net.clone());
                 engine.set_options(players[side].opts);
                 engine.set_game_history(counts.clone());
