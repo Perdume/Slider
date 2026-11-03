@@ -256,6 +256,22 @@ if S["RUN_STACK"]:
     sprt("stack_lmr2_smp4_150ms", ["--a", W, "--opts-a", "lmr2", "--search-threads-a", 4], ["--b", W], limit=["--time-ms", 150],
          note="lmr2 + 4스레드 vs 기본 (150ms)", game_threads=gt, max_games=300)
 
+SPSA_PAR = env("SPSA_PAR", 4)  # 동시에 돌리는 흔들기 수 (판 하나가 길면 다른 대국이 코어를 채운다)
+
+
+def spsa_batch(k0, n, make_cmd):
+    """반복 k0 .. k0+n-1 의 대국을 동시에 돌리고 (A쪽 이긴 판 - B쪽 이긴 판) / 판 수 목록을 돌려준다."""
+    procs = [subprocess.Popen(list(map(str, make_cmd(k0 + i))), stdout=subprocess.PIPE, text=True) for i in range(n)]
+    nets = []
+    for p in procs:
+        out, _ = p.communicate()
+        if p.returncode != 0:
+            raise RuntimeError("matchup 실패")
+        r = json.loads([l for l in out.splitlines() if l.startswith("RESULT ")][-1][len("RESULT "):])
+        nets.append((r["aWins"] - r["bWins"]) / r["games"])
+    return nets
+
+
 # 이름, 시작값, 흔드는 폭 c, 최소, 최대 (기본값 = 예전 고정 상수)
 SPSA_PARAMS = [("margin", 40, 8, 10, 120), ("trap", 60, 12, 0, 200), ("plan_ply", 5, 1, 3, 9),
                ("lmr_depth", 3, 1, 2, 6), ("lmr_index", 3, 1, 1, 8), ("lmr2_depth", 5, 1, 3, 8), ("lmr2_index", 6, 1, 3, 12)]
@@ -272,24 +288,27 @@ if S["RUN_SPSA"]:
     lo = np.array([p[3] for p in SPSA_PARAMS], float)
     hi = np.array([p[4] for p in SPSA_PARAMS], float)
     while sp["iter"] < S["SPSA_ITERS"]:
-        k = sp["iter"]
-        rng = np.random.default_rng(S["SEED"] * 1_000_003 + k)
-        delta = rng.choice([-1.0, 1.0], size=len(SPSA_PARAMS))
+        k0 = sp["iter"]
+        n = min(SPSA_PAR, S["SPSA_ITERS"] - k0)
         theta = np.array(sp["theta"], float)
-        plus, minus = np.clip(theta + c * delta, lo, hi), np.clip(theta - c * delta, lo, hi)
-        cmd = [BIN / "matchup", "--a", W, "--opts-a", "lmr2", "--tune-a", tune_str(plus), "--b", W, "--opts-b", "lmr2",
-               "--tune-b", tune_str(minus), "--games", S["SPSA_GAMES"], "--time-ms", S["MATCH_TIME_MS"],
-               "--max-plies", S["MAX_PLIES"], "--threads", THREADS, "--seed", 50_000 + k]
-        out = subprocess.run(list(map(str, cmd)), capture_output=True, text=True, check=True).stdout
-        r = json.loads([l for l in out.splitlines() if l.startswith("RESULT ")][-1][len("RESULT "):])
-        net = (r["aWins"] - r["bWins"]) / r["games"]
-        theta = np.clip(theta + S["SPSA_LR"] * c * net * delta, lo, hi)
-        sp["theta"], sp["iter"] = theta.tolist(), k + 1
-        sp["log"].append([k + 1, round(net, 3), tune_str(theta)])
+        deltas = [np.random.default_rng(S["SEED"] * 1_000_003 + k).choice([-1.0, 1.0], size=len(SPSA_PARAMS)) for k in range(k0, k0 + n)]
+
+        def make_cmd(k, theta=theta, deltas=deltas, k0=k0):
+            d = deltas[k - k0]
+            plus, minus = np.clip(theta + c * d, lo, hi), np.clip(theta - c * d, lo, hi)
+            return [BIN / "matchup", "--a", W, "--opts-a", "lmr2", "--tune-a", tune_str(plus), "--b", W, "--opts-b", "lmr2",
+                    "--tune-b", tune_str(minus), "--games", S["SPSA_GAMES"], "--time-ms", S["MATCH_TIME_MS"],
+                    "--max-plies", S["MAX_PLIES"], "--threads", max(1, THREADS // n), "--seed", 50_000 + k]
+
+        nets = spsa_batch(k0, n, make_cmd)
+        for d, net in zip(deltas, nets):
+            theta = np.clip(theta + S["SPSA_LR"] * c * net * d, lo, hi)
+        sp["theta"], sp["iter"] = theta.tolist(), k0 + n
+        sp["log"].append([k0 + n, [round(x, 3) for x in nets], tune_str(theta)])
         state["spsa"] = sp
         save_state()
-        if (k + 1) % 10 == 0:
-            log(f"[SPSA {k + 1}/{S['SPSA_ITERS']}] {tune_str(theta)}")
+        if sp["iter"] % 20 == 0 or sp["iter"] >= S["SPSA_ITERS"]:
+            log(f"[SPSA {sp['iter']}/{S['SPSA_ITERS']}] {tune_str(theta)}")
     final = tune_str(sp["theta"])
     state["spsa_result"] = {"note": "SPSA 결과 " + final}
     save_state()
@@ -318,23 +337,29 @@ if S["RUN_SPSA_W"]:
     spw = state.get("spsa_w", {"iter": 0, "theta": w0.tolist(), "log": []})
     pw, mw = WORK / "spsa_w_plus.json", WORK / "spsa_w_minus.json"
     while spw["iter"] < S["SPSA_W_ITERS"]:
-        k = spw["iter"]
-        rng = np.random.default_rng(S["SEED"] * 7_000_003 + k)
-        delta = rng.choice([-1.0, 1.0], size=len(W_NAMES))
+        k0 = spw["iter"]
+        n = min(SPSA_PAR, S["SPSA_W_ITERS"] - k0)
         theta = np.array(spw["theta"], float)
-        write_w(pw, np.clip(theta + cw * delta, lo_w, hi_w))
-        write_w(mw, np.clip(theta - cw * delta, lo_w, hi_w))
-        cmd = [BIN / "matchup", "--a", pw, "--opts-a", "lmr2", "--b", mw, "--opts-b", "lmr2", "--games", S["SPSA_GAMES"],
-               "--time-ms", S["MATCH_TIME_MS"], "--max-plies", S["MAX_PLIES"], "--threads", THREADS, "--seed", 90_000 + k]
-        out = subprocess.run(list(map(str, cmd)), capture_output=True, text=True, check=True).stdout
-        r = json.loads([l for l in out.splitlines() if l.startswith("RESULT ")][-1][len("RESULT "):])
-        net = (r["aWins"] - r["bWins"]) / r["games"]
-        theta = np.clip(theta + S["SPSA_LR"] * cw * net * delta, lo_w, hi_w)
-        spw["theta"], spw["iter"] = theta.tolist(), k + 1
-        spw["log"].append([k + 1, round(net, 3), [int(round(v)) for v in theta]])
+        deltas = [np.random.default_rng(S["SEED"] * 7_000_003 + k).choice([-1.0, 1.0], size=len(W_NAMES)) for k in range(k0, k0 + n)]
+        for i, d in enumerate(deltas):
+            write_w(WORK / f"spsa_w_plus{i}.json", np.clip(theta + cw * d, lo_w, hi_w))
+            write_w(WORK / f"spsa_w_minus{i}.json", np.clip(theta - cw * d, lo_w, hi_w))
+
+        def make_cmd(k, k0=k0, n=n):
+            i = k - k0
+            return [BIN / "matchup", "--a", WORK / f"spsa_w_plus{i}.json", "--opts-a", "lmr2", "--b", WORK / f"spsa_w_minus{i}.json",
+                    "--opts-b", "lmr2", "--games", S["SPSA_GAMES"], "--time-ms", S["MATCH_TIME_MS"], "--max-plies", S["MAX_PLIES"],
+                    "--threads", max(1, THREADS // n), "--seed", 90_000 + k]
+
+        nets = spsa_batch(k0, n, make_cmd)
+        for d, net in zip(deltas, nets):
+            theta = np.clip(theta + S["SPSA_LR"] * cw * net * d, lo_w, hi_w)
+        spw["theta"], spw["iter"] = theta.tolist(), k0 + n
+        spw["log"].append([k0 + n, [round(x, 3) for x in nets], [int(round(v)) for v in theta]])
         state["spsa_w"] = spw
         save_state()
-        if (k + 1) % 10 == 0:
+        k = spw["iter"] - 1
+        if (k + 1) % 20 == 0 or spw["iter"] >= S["SPSA_W_ITERS"]:
             log(f"[가중치 SPSA {k + 1}/{S['SPSA_W_ITERS']}] " + ", ".join(f"{n}={int(round(v))}" for n, v in zip(W_NAMES, theta)))
     new_w = write_w(OUT / "data" / "weights_spsa.json", np.array(spw["theta"]))
     state["spsa_w_result"] = {"note": "가중치 SPSA 결과 " + new_w.read_text()}
