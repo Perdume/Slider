@@ -350,6 +350,9 @@ if env("RUN_CONTEMPT", True):
     for cval in (30, 80):
         sprt(f"contempt{cval}_30ms", ["--a", W, "--opts-a", "lmr2", "--tune-a", f"contempt={cval}"], ["--b", W, "--opts-b", "lmr2"],
              note=f"contempt {cval} vs 0 (lmr2, 30ms)", max_games=1000)
+    # 형세에 따라: 이기는 중(+100 넘음)이면 무승부를 50 나쁘게, 지는 중(-100 아래)이면 50 좋게
+    sprt("dyncontempt50_30ms", ["--a", W, "--opts-a", "lmr2", "--tune-a", "dyn_contempt=50,dyn_threshold=100"],
+         ["--b", W, "--opts-b", "lmr2"], note="형세 contempt 50 vs 0 (lmr2, 30ms)", max_games=1000)
 
 # ---------------------------------------------------------------- 요약
 lines = [f"설정: {SETTINGS} | threads {THREADS} | 이번 실행 {time.time() - t_start:.0f}초"]

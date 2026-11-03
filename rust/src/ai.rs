@@ -216,11 +216,15 @@ pub struct Tunables {
     pub lmr2_index: i32,
     /// 무승부를 수를 고르는 쪽(탐색의 루트)에게만 이만큼 나쁘게 본다 (상대에게는 그만큼 좋게). 0 이면 무승부 = 0점
     pub contempt: i32,
+    /// 형세에 따른 contempt: 직전 깊이의 최선 점수가 +dyn_threshold 보다 좋으면(이기는 중) 무승부를 dyn_contempt 만큼 더 나쁘게,
+    /// -dyn_threshold 보다 나쁘면(지는 중) 그만큼 좋게 본다. 0 이면 끔
+    pub dyn_contempt: i32,
+    pub dyn_threshold: i32,
 }
 
 impl Default for Tunables {
     fn default() -> Self {
-        Tunables { margin: MARGIN, trap: TRAP_WEIGHT, plan_ply: PLAN_PLY, lmr_depth: 3, lmr_index: 3, lmr2_depth: 5, lmr2_index: 6, contempt: 0 }
+        Tunables { margin: MARGIN, trap: TRAP_WEIGHT, plan_ply: PLAN_PLY, lmr_depth: 3, lmr_index: 3, lmr2_depth: 5, lmr2_index: 6, contempt: 0, dyn_contempt: 0, dyn_threshold: 100 }
     }
 }
 
@@ -240,6 +244,8 @@ impl Tunables {
                 "lmr2_depth" => t.lmr2_depth = v,
                 "lmr2_index" => t.lmr2_index = v.max(1),
                 "contempt" => t.contempt = v,
+                "dyn_contempt" => t.dyn_contempt = v,
+                "dyn_threshold" => t.dyn_threshold = v.max(0),
                 other => return Err(format!("알 수 없는 탐색 상수: {}", other)),
             }
         }
@@ -250,6 +256,8 @@ impl Tunables {
 pub struct SliderAi {
     time_limit_ms: u64,
     tune: Tunables,
+    /// 지금 쓰는 contempt (= tune.contempt + 형세에 따른 몫)
+    cur_contempt: i32,
     opts: SearchOptions,
     max_depth: i32,
     weights: [i32; weights::COUNT],
@@ -369,6 +377,7 @@ impl SliderAi {
         SliderAi {
             time_limit_ms,
             tune: Tunables::default(),
+            cur_contempt: 0,
             opts: SearchOptions::default(),
             max_depth: max_depth.min(MAX_PLY as i32 - 2),
             weights,
@@ -405,6 +414,7 @@ impl SliderAi {
         a.net = self.net.clone();
         a.opts = self.opts;
         a.tune = self.tune;
+        a.cur_contempt = self.cur_contempt;
         a.game_history = self.game_history.clone();
         a.opt_ply = self.opt_ply;
         a.path[0] = self.path[0];
@@ -416,18 +426,19 @@ impl SliderAi {
     /// 무승부 점수 (둘 차례인 쪽 기준). 짝수 ply 는 루트(수를 고르는 쪽) 차례라서 -contempt, 홀수 ply 는 상대 차례라서 +contempt.
     #[inline(always)]
     fn draw_score(&self, ply: usize) -> i32 {
-        if self.tune.contempt == 0 {
+        if self.cur_contempt == 0 {
             DRAW
         } else if ply % 2 == 0 {
-            DRAW - self.tune.contempt
+            DRAW - self.cur_contempt
         } else {
-            DRAW + self.tune.contempt
+            DRAW + self.cur_contempt
         }
     }
 
     /// 탐색 상수 (기본은 예전 고정값).
     pub fn set_tunables(&mut self, tune: Tunables) {
         self.tune = tune;
+        self.cur_contempt = tune.contempt;
     }
 
     /// 탐색 개선 선택지 (기본은 모두 끔).
@@ -563,6 +574,18 @@ impl SliderAi {
                 break;
             }
             sort_by_score(&mut work, &mut work_scores, n);
+            if self.tune.dyn_contempt != 0 {
+                // 다음 깊이는 이번 깊이의 형세로: 이기는 중이면 무승부를 피하고, 지는 중이면 무승부를 반긴다
+                let t = self.tune;
+                let lean = if best > t.dyn_threshold {
+                    t.dyn_contempt
+                } else if best < -t.dyn_threshold {
+                    -t.dyn_contempt
+                } else {
+                    0
+                };
+                self.cur_contempt = t.contempt + lean;
+            }
             root_moves.copy_from_slice(&work);
             scores.copy_from_slice(&work_scores);
             done = depth;
