@@ -48,6 +48,8 @@ pub const DRAW: i32 = 0;
 const INF: i32 = WIN + 1;
 
 const MAX_PLY: usize = 64;
+/// nnplan 에서 2단계(신경망 평가) 탐색의 최대 깊이. 깊이 4 고정 대국에서 신경망이 선형 평가보다 확실히 강했다
+const NN_PLAN_DEPTH: i32 = 4;
 const NO_PLAN: i32 = i32::MAX;
 const TT_SIZE: usize = 1 << 19;
 const EXACT: u8 = 0;
@@ -148,6 +150,9 @@ pub struct SearchOptions {
     pub lmr: bool,
     /// LMR 을 더 세게: 깊이 5 이상에서 7번째 이후 수는 2단계 줄인다 (lmr 을 켠 것으로 친다)
     pub lmr2: bool,
+    /// 신경망을 후보 고르기에만 쓴다: 1단계(안전한 수 찾기)는 선형 평가로 깊게, 2단계(안전한 수 중 고르기)만
+    /// 신경망 평가로 깊이 NN_PLAN_DEPTH 까지. 신경망이 없으면 효과 없음
+    pub nnplan: bool,
     /// 널무브: 한 수 쉬어도(차례를 넘겨도) 충분히 좋으면 더 보지 않고 자른다 (상대가 바로 이길 수 있는 국면에서는 안 씀)
     pub nmp: bool,
 }
@@ -165,7 +170,8 @@ impl SearchOptions {
                     o.lmr2 = true;
                 }
                 "nmp" => o.nmp = true,
-                other => return Err(format!("알 수 없는 탐색 옵션: {} (pvs, lmr, lmr2, nmp 중에서)", other)),
+                "nnplan" => o.nnplan = true,
+                other => return Err(format!("알 수 없는 탐색 옵션: {} (pvs, lmr, lmr2, nmp, nnplan 중에서)", other)),
             }
         }
         Ok(o)
@@ -185,6 +191,9 @@ impl std::fmt::Display for SearchOptions {
         }
         if self.nmp {
             parts.push("nmp");
+        }
+        if self.nnplan {
+            parts.push("nnplan");
         }
         write!(f, "{}", if parts.is_empty() { "기본".to_string() } else { parts.join(",") })
     }
@@ -401,7 +410,11 @@ impl SliderAi {
         root.truncate(n);
         let mut scores = vec![0i32; n];
         self.opt_ply = NO_PLAN;
+        let saved_net = if self.opts.nnplan { self.net.take() } else { None };
         let depth = self.iterate(tiles, me, opp, &mut root, &mut scores, deadline_after(start, self.time_limit_ms / 2));
+        if self.opts.nnplan {
+            self.net = saved_net;
+        }
         let best = scores[0];
         let mut safe = 0;
         while safe < n && scores[safe] > best - MARGIN {
@@ -412,7 +425,12 @@ impl SliderAi {
             let mut plan_moves = root[..safe].to_vec();
             let mut plan_scores = vec![0i32; safe];
             self.opt_ply = PLAN_PLY;
+            let saved_depth = self.max_depth;
+            if self.opts.nnplan && self.net.is_some() {
+                self.max_depth = self.max_depth.min(NN_PLAN_DEPTH);
+            }
             self.iterate(tiles, me, opp, &mut plan_moves, &mut plan_scores, deadline_after(start, self.time_limit_ms));
+            self.max_depth = saved_depth;
             self.opt_ply = NO_PLAN;
             mv = self.choose(tiles, me, opp, &plan_moves, &plan_scores);
         }

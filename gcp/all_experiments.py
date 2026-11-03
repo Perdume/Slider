@@ -207,6 +207,14 @@ if S["RUN_SMP"]:
     sprt("smp4_150ms", ["--a", W, "--search-threads-a", 4], ["--b", W], limit=["--time-ms", 150],
          note="병렬 탐색 4스레드 vs 1스레드 (150ms)", game_threads=gt, max_games=300)
 
+if S["RUN_SMP"] or S["RUN_BIG_NN"]:
+    # 섞어 쓰기: 1단계(안전한 수 찾기)는 선형 평가로 깊게, 2단계(안전한 수 중 고르기)만 신경망으로 깊이 4
+    net32 = OUT / "data" / f"net_feat_{S['HIDDEN']}_{tune_data.stem}.txt"
+    if net32.exists():
+        sprt("nnplan_30ms", ["--a", W, "--net-a", net32, "--opts-a", "nnplan"], ["--b", W], note="신경망은 후보 고르기에만 (30ms)")
+        sprt("nnplan_150ms", ["--a", W, "--net-a", net32, "--opts-a", "nnplan"], ["--b", W], limit=["--time-ms", 150],
+             note="신경망은 후보 고르기에만 (150ms)", max_games=300)
+
 if S["RUN_BIG_NN"]:
     h = S["BIG_HIDDEN"]
     big_target = WORK / f"target_{h}"
