@@ -21,7 +21,7 @@ import java.util.List;
 
 /**
  * 학습을 백그라운드에서 돌리는 포그라운드 서비스.
- * 실제 일은 Rust 실행 파일 libtrainloop.so 가 한다 (자가대전 -> 신경망 학습 -> 대국 확인 -> 채택).
+ * 실제 일은 Rust 실행 파일 libspsa.so 가 한다 (대국을 반복하며 탐색 상수 + 평가 가중치를 SPSA 로 맞춤, 새 규칙).
  * 이 서비스는 그 프로세스를 띄우고, 출력 줄을 화면에 넘기고, 중지 신호(STOP 파일)를 만든다.
  */
 public class TrainService extends Service {
@@ -39,6 +39,13 @@ public class TrainService extends Service {
     private volatile Process process;
     private PowerManager.WakeLock wakeLock;
     private File workDir;
+
+    /** SPSA 진행 상태와 결과가 쌓이는 폴더 (다시 시작하면 여기서 이어서) */
+    static File outDir(Context c) {
+        File dir = new File(workDir(c), "spsa");
+        dir.mkdirs();
+        return dir;
+    }
 
     static File workDir(Context c) {
         File dir = new File(c.getFilesDir(), "work");
@@ -80,10 +87,10 @@ public class TrainService extends Service {
         }
         running = true;
         workDir = workDir(this);
-        startForeground(NOTIFICATION_ID, notification("학습을 시작합니다"));
+        startForeground(NOTIFICATION_ID, notification("튜닝을 시작합니다"));
         PowerManager pm = (PowerManager) getSystemService(Context.POWER_SERVICE);
         wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "slidertrain:train");
-        wakeLock.acquire(12L * 60 * 60 * 1000);
+        wakeLock.acquire(24L * 60 * 60 * 1000);
         final Intent request = intent;
         new Thread(() -> runTraining(request), "train-runner").start();
         notifyChange();
@@ -130,25 +137,27 @@ public class TrainService extends Service {
 
     private List<String> buildCommand(Intent r, File stopFile) throws IOException {
         File lib = new File(getApplicationInfo().nativeLibraryDir);
-        File loop = new File(lib, "libtrainloop.so");
-        if (!loop.exists()) {
-            throw new IOException("실행 파일이 없습니다 (이 기기는 arm64 가 아닐 수 있습니다): " + loop);
+        File bin = new File(lib, "libspsa.so");
+        if (!bin.exists()) {
+            throw new IOException("실행 파일이 없습니다 (이 기기는 arm64 가 아닐 수 있습니다): " + bin);
+        }
+        File out = outDir(this);
+        if (r.getBooleanExtra("reset", false)) {
+            new File(out, "spsa_state.txt").delete();
+            log("== 저장된 진행을 지우고 처음부터 ==");
         }
         List<String> c = new ArrayList<>();
-        c.add(loop.getAbsolutePath());
-        add(c, "--work-dir", workDir.getAbsolutePath());
-        add(c, "--selfplay-bin", new File(lib, "libselfplay.so").getAbsolutePath());
-        add(c, "--trainnet-bin", new File(lib, "libtrainnet.so").getAbsolutePath());
-        add(c, "--matchup-bin", new File(lib, "libmatchup.so").getAbsolutePath());
+        c.add(bin.getAbsolutePath());
+        add(c, "--out", out.getAbsolutePath());
         add(c, "--stop-file", stopFile.getAbsolutePath());
-        add(c, "--rounds", String.valueOf(r.getIntExtra("rounds", 2)));
-        add(c, "--games", String.valueOf(r.getIntExtra("games", 600)));
+        add(c, "--games", String.valueOf(r.getIntExtra("games", 32)));
         add(c, "--time-ms", String.valueOf(r.getIntExtra("timeMs", 30)));
         add(c, "--threads", String.valueOf(r.getIntExtra("threads", 2)));
-        add(c, "--epochs", String.valueOf(r.getIntExtra("epochs", 40)));
-        add(c, "--match-games", String.valueOf(r.getIntExtra("matchGames", 200)));
-        add(c, "--match-time-ms", String.valueOf(r.getIntExtra("matchTimeMs", 50)));
-        add(c, "--lambda", String.valueOf(r.getFloatExtra("lambda", 1.0f)));
+        add(c, "--iters", String.valueOf(r.getIntExtra("iters", 100000)));
+        String tune = r.getStringExtra("tune");
+        if (tune != null && !tune.trim().isEmpty()) {
+            add(c, "--tune", tune.trim().replaceAll("\\s+", ""));
+        }
         String weights = r.getStringExtra("weightsJson");
         if (weights != null && !weights.trim().isEmpty()) {
             File w = new File(workDir, "weights.json");
@@ -156,10 +165,6 @@ public class TrainService extends Service {
                 out.write(weights.getBytes(StandardCharsets.UTF_8));
             }
             add(c, "--weights", w.getAbsolutePath());
-        }
-        File prev = new File(workDir, "net.txt");
-        if (r.getBooleanExtra("resume", false) && prev.exists()) {
-            add(c, "--net", prev.getAbsolutePath());
         }
         return c;
     }
@@ -198,7 +203,7 @@ public class TrainService extends Service {
         PendingIntent open = PendingIntent.getActivity(this, 0, new Intent(this, MainActivity.class),
                 PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
         return new Notification.Builder(this, CHANNEL)
-                .setContentTitle("Slider 학습 중")
+                .setContentTitle("Slider 튜닝 중")
                 .setContentText(text)
                 .setSmallIcon(android.R.drawable.stat_sys_download)
                 .setContentIntent(open)

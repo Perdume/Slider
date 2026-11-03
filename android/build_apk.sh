@@ -3,7 +3,7 @@
 #   ANDROID_HOME=/path/to/sdk ./build_apk.sh
 # 필요한 것: Rust(rustup), JDK 17+, 안드로이드 SDK 의 platforms;android-34, build-tools;34.0.0, ndk;26.x
 #   sdkmanager "platforms;android-34" "build-tools;34.0.0" "ndk;26.3.11579264"
-# 결과: android/build/slider-train.apk (디버그 키로 서명, 직접 설치용)
+# 결과: android/build/slider-train.apk (디버그 키로 서명, 직접 설치용). 앱 = 새 규칙 SPSA 튜닝 (libspsa.so)
 set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -14,7 +14,7 @@ NDK="$(ls -d "$SDK"/ndk/* | sort -V | tail -1)"
 CLANG="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android24-clang"
 TARGET=aarch64-linux-android
 OUT="$HERE/build"
-APP_BINS=(trainloop selfplay trainnet matchup)
+APP_BINS=(spsa)
 
 for f in "$PLATFORM" "$CLANG" "$BT/aapt2" "$BT/d8" "$BT/zipalign" "$BT/apksigner"; do
   [ -e "$f" ] || { echo "없음: $f" >&2; exit 1; }
@@ -22,7 +22,7 @@ done
 
 echo "== 1/6 Rust 실행 파일 (arm64) 빌드"
 rustup target add "$TARGET" >/dev/null
-(cd "$HERE/../rust" && CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER="$CLANG" cargo build --release --target "$TARGET")
+(cd "$HERE/../rust" && CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER="$CLANG" cargo build --release --target "$TARGET" $(printf -- '--bin %s ' "${APP_BINS[@]}"))
 
 rm -rf "$OUT" && mkdir -p "$OUT/lib/arm64-v8a" "$OUT/classes"
 for b in "${APP_BINS[@]}"; do
@@ -32,7 +32,7 @@ done
 
 echo "== 2/6 매니페스트 링크 (aapt2)"
 "$BT/aapt2" link -o "$OUT/base.apk" -I "$PLATFORM" --manifest "$HERE/AndroidManifest.xml" \
-  --min-sdk-version 29 --target-sdk-version 33 --version-code 1 --version-name 0.1
+  --min-sdk-version 29 --target-sdk-version 33 --version-code 2 --version-name 0.2
 
 echo "== 3/6 Java 컴파일"
 # android.jar 에는 람다에 필요한 java.lang.invoke 가 없어서, 자바 API 는 JDK(--release 8)에서 가져오고 안드로이드 API 만 android.jar 에서 가져온다

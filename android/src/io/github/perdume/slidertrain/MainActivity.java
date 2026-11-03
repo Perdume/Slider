@@ -31,11 +31,11 @@ import java.text.SimpleDateFormat;
 import java.util.Date;
 import java.util.Locale;
 
-/** 설정을 입력하고 학습을 시작/중지하는 화면. 화면은 코드로 만든다 (리소스 파일 없음). */
+/** 설정을 입력하고 튜닝(SPSA)을 시작/중지하는 화면. 화면은 코드로 만든다 (리소스 파일 없음). */
 public class MainActivity extends Activity {
     private SharedPreferences prefs;
-    private EditText rounds, games, timeMs, threads, epochs, matchGames, matchTimeMs, lambda, weights;
-    private CheckBox resume;
+    private EditText games, timeMs, threads, iters, tune, weights;
+    private CheckBox reset;
     private TextView status, logView;
     private ScrollView logScroll;
     private Button start, stop;
@@ -52,27 +52,31 @@ public class MainActivity extends Activity {
         root.setPadding(pad, pad, pad, pad);
 
         TextView title = new TextView(this);
-        title.setText("Slider 신경망 학습");
+        title.setText("Slider AI 튜닝 (새 규칙)");
         title.setTextSize(22);
         root.addView(title);
 
         TextView note = new TextView(this);
-        note.setText("이 기기 CPU 코어 " + cores + "개로 자가대전을 돌려 신경망을 학습합니다. NPU/GPU 는 쓰지 않습니다 (탐색이 정수 분기 위주라 가속 이득이 없습니다).");
+        note.setText("이 기기 CPU 코어 " + cores + "개로 대국을 반복하며 AI 의 탐색 상수와 평가 가중치를 조금씩 맞춥니다 (SPSA). "
+                + "멈췄다가 다시 시작하면 이어서 합니다. 충전기를 꽂고 돌리세요. 결과(spsa_tune / spsa_weights)는 다운로드 폴더에 저장할 수 있습니다.");
         note.setTextSize(13);
         root.addView(note);
 
-        rounds = field(root, "라운드 수", "rounds", "2");
-        games = field(root, "라운드당 자가대전 판 수", "games", "600");
+        games = field(root, "반복당 대국 수 (짝수, 많을수록 정확하고 느림)", "games", "32");
         timeMs = field(root, "수당 탐색 시간(ms)", "timeMs", "30");
         threads = field(root, "스레드 수 (발열이 심하면 줄이세요)", "threads", String.valueOf(Math.max(1, cores - 1)));
-        epochs = field(root, "학습 epoch", "epochs", "40");
-        matchGames = field(root, "대국 확인 판 수", "matchGames", "200");
-        matchTimeMs = field(root, "대국 확인 수당 시간(ms)", "matchTimeMs", "50");
-        lambda = field(root, "탐색 점수 비중 λ (0~1)", "lambda", "1.0");
-        lambda.setInputType(InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_FLAG_DECIMAL);
+        iters = field(root, "최대 반복 수", "iters", "100000");
+
+        TextView tl = new TextView(this);
+        tl.setText("시작 탐색 상수 (선택, 비우면 게임 설정. 예: margin=77,trap=24,...)");
+        root.addView(tl);
+        tune = new EditText(this);
+        tune.setSingleLine(false);
+        tune.setText(prefs.getString("tune", ""));
+        root.addView(tune);
 
         TextView wl = new TextView(this);
-        wl.setText("선형 가중치 JSON (선택, 비우면 기본값)");
+        wl.setText("시작 가중치 JSON (선택, 비우면 게임 설정)");
         root.addView(wl);
         weights = new EditText(this);
         weights.setMinLines(2);
@@ -82,10 +86,10 @@ public class MainActivity extends Activity {
         weights.setHint("{\"threat1\": -620, ...}");
         root.addView(weights);
 
-        resume = new CheckBox(this);
-        resume.setText("이전에 저장된 net.txt 에서 이어서");
-        resume.setChecked(prefs.getBoolean("resume", false));
-        root.addView(resume);
+        reset = new CheckBox(this);
+        reset.setText("처음부터 다시 (저장된 진행을 지우고 위 시작값에서)");
+        reset.setChecked(false);
+        root.addView(reset);
 
         LinearLayout buttons = new LinearLayout(this);
         buttons.setOrientation(LinearLayout.HORIZONTAL);
@@ -147,20 +151,14 @@ public class MainActivity extends Activity {
             requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, 1);
         }
         Intent i = new Intent(this, TrainService.class).setAction(TrainService.ACTION_START);
-        i.putExtra("rounds", intOf(rounds, 2));
-        i.putExtra("games", intOf(games, 600));
+        i.putExtra("games", Math.max(2, intOf(games, 32)));
         i.putExtra("timeMs", intOf(timeMs, 30));
         i.putExtra("threads", Math.max(1, intOf(threads, 2)));
-        i.putExtra("epochs", intOf(epochs, 40));
-        i.putExtra("matchGames", intOf(matchGames, 200));
-        i.putExtra("matchTimeMs", intOf(matchTimeMs, 50));
-        try {
-            i.putExtra("lambda", Float.parseFloat(lambda.getText().toString().trim()));
-        } catch (NumberFormatException e) {
-            i.putExtra("lambda", 1.0f);
-        }
+        i.putExtra("iters", intOf(iters, 100000));
+        i.putExtra("tune", tune.getText().toString().trim());
         i.putExtra("weightsJson", weights.getText().toString());
-        i.putExtra("resume", resume.isChecked());
+        i.putExtra("reset", reset.isChecked());
+        reset.setChecked(false);
         startForegroundService(i);
     }
 
@@ -168,8 +166,13 @@ public class MainActivity extends Activity {
         boolean running = TrainService.running;
         start.setEnabled(!running);
         stop.setEnabled(running);
-        File net = new File(TrainService.workDir(this), "net.txt");
-        status.setText((running ? "● 실행 중" : "○ 대기") + (net.exists() ? "   |   저장된 net.txt " + net.length() / 1024 + " KB" : ""));
+        File state = new File(TrainService.outDir(this), "spsa_state.txt");
+        String done = "";
+        try (java.io.BufferedReader r = new java.io.BufferedReader(new java.io.FileReader(state))) {
+            done = "   |   지금까지 반복 " + r.readLine().trim();
+        } catch (Exception ignored) {
+        }
+        status.setText((running ? "● 실행 중" : "○ 대기") + done);
         String text;
         synchronized (TrainService.LOG) {
             text = TrainService.LOG.toString();
@@ -180,19 +183,16 @@ public class MainActivity extends Activity {
 
     /** 결과 파일(net.txt)과 로그를 다운로드 폴더에 복사한다 (저장소 권한 없이 MediaStore 로). */
     private void saveResult() {
-        File work = TrainService.workDir(this);
+        File work = TrainService.outDir(this);
         String stamp = new SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(new Date());
         int saved = 0;
         try {
-            File net = new File(work, "net.txt");
-            if (net.exists()) {
-                copyToDownloads(net, "slider_net_" + stamp + ".txt");
-                saved++;
-            }
-            File summary = new File(work, "summary.txt");
-            if (summary.exists()) {
-                copyToDownloads(summary, "slider_summary_" + stamp + ".txt");
-                saved++;
+            for (String[] f : new String[][]{{"spsa_tune.txt", "slider_spsa_tune_"}, {"spsa_weights.json", "slider_spsa_weights_"}}) {
+                File src = new File(work, f[0]);
+                if (src.exists()) {
+                    copyToDownloads(src, f[1] + stamp + (f[0].endsWith(".json") ? ".json" : ".txt"));
+                    saved++;
+                }
             }
             String log;
             synchronized (TrainService.LOG) {
@@ -233,16 +233,12 @@ public class MainActivity extends Activity {
 
     private void saveSettings() {
         prefs.edit()
-                .putString("rounds", rounds.getText().toString())
                 .putString("games", games.getText().toString())
                 .putString("timeMs", timeMs.getText().toString())
                 .putString("threads", threads.getText().toString())
-                .putString("epochs", epochs.getText().toString())
-                .putString("matchGames", matchGames.getText().toString())
-                .putString("matchTimeMs", matchTimeMs.getText().toString())
-                .putString("lambda", lambda.getText().toString())
+                .putString("iters", iters.getText().toString())
+                .putString("tune", tune.getText().toString())
                 .putString("weights", weights.getText().toString())
-                .putBoolean("resume", resume.isChecked())
                 .apply();
     }
 
