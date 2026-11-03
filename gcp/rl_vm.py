@@ -39,6 +39,7 @@ MINIBATCH = 1024
 ENGINE_MIX = 0.25
 REPLAY = 8
 RL_HOURS = float(E("RL_HOURS", 4))
+RL_UNTIL = float(E("RL_UNTIL", 0))  # 이 시각(유닉스 초)이 되면 학습을 멈춘다 (0 이면 RL_HOURS 만)
 EVAL_EVERY = 5
 EVAL_GAMES = 256
 ENGINE_EVAL_EVERY = 10
@@ -104,6 +105,10 @@ def main():
     hist_path = OUT / f"history_{TAG}.json"
     opt = az.make_optimizer(LR)
     engine = eb.Engine(BIN / "bestmove", time_ms=ENGINE_EVAL_TIME_MS, threads=CPUS)
+    if not ckpt.exists() and E("BUCKET"):
+        # 앞 VM 이 GCS 에 남긴 저장 파일이 있으면 받아서 이어서 한다
+        for f in (ckpt, hist_path, OUT / "log.txt"):
+            subprocess.run(["gsutil", "-q", "cp", f"gs://{E('BUCKET')}/{f.name}", str(f)], check=False)
     if ckpt.exists():
         ck = az.load(str(ckpt))
         params = jax.tree_util.tree_map(jnp.asarray, ck["params"])
@@ -128,6 +133,8 @@ def main():
     key = jax.random.PRNGKey(SEED + 1000 + start_it)
     replay = []
     deadline = time.time() + RL_HOURS * 3600
+    if RL_UNTIL > 0:
+        deadline = min(deadline, RL_UNTIL)
     it = start_it
     while time.time() < deadline:
         t0 = time.time()
