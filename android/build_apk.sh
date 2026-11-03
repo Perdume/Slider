@@ -32,7 +32,7 @@ done
 
 echo "== 2/6 매니페스트 링크 (aapt2)"
 "$BT/aapt2" link -o "$OUT/base.apk" -I "$PLATFORM" --manifest "$HERE/AndroidManifest.xml" \
-  --min-sdk-version 29 --target-sdk-version 33 --version-code 3 --version-name 0.3
+  --min-sdk-version 29 --target-sdk-version 33 --version-code 4 --version-name 1.0
 
 echo "== 3/6 Java 컴파일"
 # android.jar 에는 람다에 필요한 java.lang.invoke 가 없어서, 자바 API 는 JDK(--release 8)에서 가져오고 안드로이드 API 만 android.jar 에서 가져온다
