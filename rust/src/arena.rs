@@ -92,6 +92,8 @@ pub struct Sample {
     pub me: u64,
     pub opp: u64,
     pub score: i32,
+    /// 탐색이 고른 수 (무작위 수로 바꾸기 전). 정책 학습용
+    pub mv: i32,
     pub outcome: f64,
 }
 
@@ -156,6 +158,7 @@ pub fn play(
                         me,
                         opp,
                         score: result.score,
+                        mv: result.mv,
                         outcome: 0.0,
                     });
                 }

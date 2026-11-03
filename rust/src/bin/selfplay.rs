@@ -129,7 +129,7 @@ fn run() -> Result<(), String> {
 fn to_json(s: &Sample, with_positions: bool) -> String {
     let features: Vec<String> = s.features.iter().map(|f| f.to_string()).collect();
     let position = if with_positions {
-        format!(",\"tiles\":{},\"me\":{},\"opp\":{}", s.tiles, s.me, s.opp)
+        format!(",\"tiles\":{},\"me\":{},\"opp\":{},\"move\":{}", s.tiles, s.me, s.opp, s.mv)
     } else {
         String::new()
     };

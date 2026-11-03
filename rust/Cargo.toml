@@ -22,6 +22,10 @@ name = "trainloop"
 path = "src/bin/trainloop.rs"
 
 [[bin]]
+name = "bestmove"
+path = "src/bin/bestmove.rs"
+
+[[bin]]
 name = "play"
 path = "src/bin/play.rs"
 
