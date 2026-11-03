@@ -137,8 +137,53 @@ pub struct SearchResult {
     pub nodes: u64,
 }
 
+/// 탐색 개선 선택지 (체스 엔진에서 쓰는 기법). 모두 꺼져 있으면 Java 엔진과 같은 수를 둔다.
+/// 정확 탐색 구간에서만 쓰고, 공격 계획을 찾는 낙관 탐색 구간에는 쓰지 않는다.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct SearchOptions {
+    /// PVS: 첫 수 다음부터는 좁은 창으로 "더 나은가"만 확인하고, 그렇다면 다시 탐색한다
+    pub pvs: bool,
+    /// LMR: 정렬에서 뒤쪽인 조용한 수(TT/킬러가 아닌 4번째 이후)는 한 단계 얕게 먼저 보고, 좋아 보이면 다시 탐색한다
+    pub lmr: bool,
+    /// 널무브: 한 수 쉬어도(차례를 넘겨도) 충분히 좋으면 더 보지 않고 자른다 (상대가 바로 이길 수 있는 국면에서는 안 씀)
+    pub nmp: bool,
+}
+
+impl SearchOptions {
+    /// "pvs,lmr,nmp" 같은 쉼표 목록을 읽는다. 빈 문자열이나 "none" 은 모두 끔.
+    pub fn parse(text: &str) -> Result<Self, String> {
+        let mut o = SearchOptions::default();
+        for part in text.split(',').map(str::trim).filter(|p| !p.is_empty() && *p != "none") {
+            match part {
+                "pvs" => o.pvs = true,
+                "lmr" => o.lmr = true,
+                "nmp" => o.nmp = true,
+                other => return Err(format!("알 수 없는 탐색 옵션: {} (pvs, lmr, nmp 중에서)", other)),
+            }
+        }
+        Ok(o)
+    }
+}
+
+impl std::fmt::Display for SearchOptions {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut parts = Vec::new();
+        if self.pvs {
+            parts.push("pvs");
+        }
+        if self.lmr {
+            parts.push("lmr");
+        }
+        if self.nmp {
+            parts.push("nmp");
+        }
+        write!(f, "{}", if parts.is_empty() { "기본".to_string() } else { parts.join(",") })
+    }
+}
+
 pub struct SliderAi {
     time_limit_ms: u64,
+    opts: SearchOptions,
     max_depth: i32,
     weights: [i32; weights::COUNT],
     /// 있으면 말단 평가에 신경망 출력을 더한다
@@ -198,6 +243,7 @@ impl SliderAi {
     pub fn with_weights(time_limit_ms: u64, max_depth: i32, w: &EvalWeights) -> Self {
         SliderAi {
             time_limit_ms,
+            opts: SearchOptions::default(),
             max_depth: max_depth.min(MAX_PLY as i32 - 2),
             weights: w.values,
             net: None,
@@ -218,6 +264,11 @@ impl SliderAi {
             may_abort: false,
             opt_ply: NO_PLAN,
         }
+    }
+
+    /// 탐색 개선 선택지 (기본은 모두 끔).
+    pub fn set_options(&mut self, opts: SearchOptions) {
+        self.opts = opts;
     }
 
     /// 말단 평가에 더할 신경망 (None 이면 기존 선형 평가만 쓴다).
@@ -450,6 +501,18 @@ impl SliderAi {
             return -self.negamax(tiles, opp, me, depth - 1, -beta, -alpha, ply + 1);
         }
 
+        // 널무브: 차례를 그냥 넘겨도 beta 이상이면 실제 수는 더 좋을 것으로 보고 자른다.
+        // 상대가 바로 이길 수 있는 국면(넘기면 진다)과 승패 점수 근처에서는 쓰지 않는다.
+        if self.opts.nmp && !optimistic && depth >= 3 && beta.abs() < WIN_BOUND && !self.can_win(tiles, opp, me) {
+            let v = -self.negamax(tiles, opp, me, depth - 1 - 2, -beta, -beta + 1, ply + 1);
+            if self.aborted {
+                return 0;
+            }
+            if v >= beta {
+                return beta;
+            }
+        }
+
         for i in 0..n {
             let m = list[i];
             key[i] = if m == tt_best {
@@ -469,7 +532,12 @@ impl SliderAi {
         for i in 0..n {
             pick_next(list, key, i, n);
             let m = list[i];
-            let s = -self.negamax(bb::apply(tiles, m), opp, bb::apply_pieces(me, m), depth - 1, -beta, -alpha, ply + 1);
+            let (nt, np) = (bb::apply(tiles, m), bb::apply_pieces(me, m));
+            let s = if optimistic || i == 0 || !(self.opts.pvs || self.opts.lmr) {
+                -self.negamax(nt, opp, np, depth - 1, -beta, -alpha, ply + 1)
+            } else {
+                self.search_later_move(nt, opp, np, depth, alpha, beta, ply, i, key[i])
+            };
             if self.aborted {
                 return 0;
             }
@@ -506,6 +574,27 @@ impl SliderAi {
             (depth as i8 as u8 as u64) | (flag as u64) << 8 | (mode as u8 as u64) << 16,
         ];
         best
+    }
+
+    /// 정렬에서 첫 수가 아닌 수 (PVS / LMR). 반환값은 negamax 와 같은 의미 (지금 둔 쪽 기준).
+    #[allow(clippy::too_many_arguments)]
+    fn search_later_move(&mut self, tiles: u64, me: u64, opp: u64, depth: i32, alpha: i32, beta: i32, ply: usize, index: usize, key: i32) -> i32 {
+        // 여기서 me 는 수를 둔 뒤 둘 차례가 된 쪽 (상대), opp 는 방금 둔 쪽
+        let quiet = key < (1 << 28); // TT 최선수/킬러가 아님
+        let reduce = if self.opts.lmr && depth >= 3 && index >= 3 && quiet { 1 } else { 0 };
+        if reduce > 0 {
+            let v = -self.negamax(tiles, me, opp, depth - 1 - reduce, -alpha - 1, -alpha, ply + 1);
+            if self.aborted || v <= alpha {
+                return v;
+            }
+        }
+        if self.opts.pvs {
+            let v = -self.negamax(tiles, me, opp, depth - 1, -alpha - 1, -alpha, ply + 1);
+            if self.aborted || v <= alpha || v >= beta {
+                return v;
+            }
+        }
+        -self.negamax(tiles, me, opp, depth - 1, -beta, -alpha, ply + 1)
     }
 
     /// 말단 평가. me 가 둘 차례이고, me 가 바로 이길 수 없는 상태라고 가정한다.

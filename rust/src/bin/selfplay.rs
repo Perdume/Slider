@@ -5,7 +5,8 @@
 //!
 //! 사용법:
 //!   selfplay --games 200 --time-ms 30 --out data/selfplay.jsonl
-//! 옵션: --games --time-ms --depth --random-plies --epsilon --max-plies --threads --seed --weights --out
+//! 옵션: --opts 탐색 개선 선택지 (pvs,lmr,nmp)
+//!       --games --time-ms --depth --random-plies --epsilon --max-plies --threads --seed --weights --out
 //!       --net 신경망 파일 (있으면 평가에 더한다)
 //!       --stop-file 경로 / --parent-pid N  멈춤 신호 (cli::Stop 참고)
 //!       --positions yes  각 줄에 국면(tiles, me, opp)도 기록한다 (신경망 학습용. 기본은 기록하지 않음)
@@ -72,7 +73,8 @@ fn run() -> Result<(), String> {
     let finished = AtomicUsize::new(0);
     let next_game = AtomicUsize::new(0);
     let start = Instant::now();
-    let pair = [Player::new(weights.clone(), net.clone()), Player::new(weights.clone(), net.clone())];
+    let opts = slider::ai::SearchOptions::parse(opt.get("opts").map(String::as_str).unwrap_or(""))?;
+    let pair = [Player::new(weights.clone(), net.clone()).with_options(opts), Player::new(weights.clone(), net.clone()).with_options(opts)];
 
     std::thread::scope(|scope| {
         for _ in 0..threads {

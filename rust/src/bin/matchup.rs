@@ -4,6 +4,7 @@
 //! 사용법:
 //!   matchup --a weights.json --b default --games 100 --time-ms 50
 //! 옵션: --net-a --net-b 쪽별 신경망 파일 (없으면 선형 평가만)
+//!       --opts-a --opts-b 쪽별 탐색 개선 선택지 (쉼표 목록: pvs,lmr,nmp. 기본은 모두 끔)
 //!       --stop-file 경로 / --parent-pid N  멈춤 신호 (멈추면 RESULT 줄 없이 끝난다)
 //!       --a --b (JSON 경로 또는 default) --games (짝수로 올림) --time-ms --depth --random-plies --max-plies --threads --seed
 //!       --sprt-elo0 0 --sprt-elo1 20 [--sprt-alpha 0.05 --sprt-beta 0.05]
@@ -14,6 +15,7 @@ use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
+use slider::ai::SearchOptions;
 use slider::arena::{self, Config, Player};
 use slider::cli;
 use slider::nnue::Network;
@@ -39,6 +41,8 @@ fn run() -> Result<(), String> {
     };
     let net_a = load_net("net-a")?;
     let net_b = load_net("net-b")?;
+    let opts_a = SearchOptions::parse(opt.get("opts-a").map(String::as_str).unwrap_or(""))?;
+    let opts_b = SearchOptions::parse(opt.get("opts-b").map(String::as_str).unwrap_or(""))?;
     let stop = cli::Stop::from_options(&opt)?;
     let games: usize = cli::get(&opt, "games", 100)?;
     let pairs = (games + 1) / 2;
@@ -77,8 +81,11 @@ fn run() -> Result<(), String> {
     // 경계를 넘은 순간의 판정 (그 뒤에 이미 두고 있던 판이 끝나서 LLR 이 경계 안으로 돌아와도 판정은 그대로)
     let verdict_at_cross: Mutex<Option<&'static str>> = Mutex::new(None);
     let next_pair = AtomicUsize::new(0);
-    let pa = Player::new(a.clone(), net_a);
-    let pb = Player::new(b.clone(), net_b);
+    if opts_a != SearchOptions::default() || opts_b != SearchOptions::default() {
+        println!("탐색: A {} / B {}", opts_a, opts_b);
+    }
+    let pa = Player::new(a.clone(), net_a).with_options(opts_a);
+    let pb = Player::new(b.clone(), net_b).with_options(opts_b);
     let ab = [pa.clone(), pb.clone()];
     let ba = [pb, pa];
 

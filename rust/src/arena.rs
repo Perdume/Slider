@@ -5,7 +5,7 @@
 
 use std::sync::Arc;
 
-use crate::ai::{position_hash, History, SliderAi};
+use crate::ai::{position_hash, History, SearchOptions, SliderAi};
 use crate::bitboard::{self as bb, GOAL, MAX_MOVES};
 use crate::javarandom::JavaRandom;
 use crate::nnue::Network;
@@ -28,11 +28,17 @@ pub const SIDE1_START: [(usize, usize); 2] = [(6, 0), (6, 6)];
 pub struct Player {
     pub weights: EvalWeights,
     pub net: Option<Arc<Network>>,
+    pub opts: SearchOptions,
 }
 
 impl Player {
     pub fn new(weights: EvalWeights, net: Option<Arc<Network>>) -> Self {
-        Player { weights, net }
+        Player { weights, net, opts: SearchOptions::default() }
+    }
+
+    pub fn with_options(mut self, opts: SearchOptions) -> Self {
+        self.opts = opts;
+        self
     }
 }
 
@@ -113,6 +119,7 @@ pub fn play(
             } else {
                 let mut engine = SliderAi::with_weights(cfg.time_ms, cfg.max_depth, &players[side].weights);
                 engine.set_net(players[side].net.clone());
+                engine.set_options(players[side].opts);
                 engine.set_game_history(counts.clone());
                 let result = engine.search(tiles, me, opp);
                 let mut chosen = result.mv;
