@@ -631,6 +631,17 @@ impl SliderAi {
         self.feature
     }
 
+    /// 정적 평가 (신경망 제외, 선형 평가 + 순환 규칙 요소). 신경망 학습에서 기준선으로 쓴다
+    pub fn static_eval_turn(&mut self, tiles: u64, me: u64, opp: u64, mc: u64, oc: u64) -> i32 {
+        let tiles = tiles | me | opp;
+        let mut list = vec![0i32; MAX_MOVES];
+        let (n, reach) = generate_turn(tiles, me, opp, mc, &mut list);
+        let saved = self.net.take();
+        let v = self.evaluate(tiles, me, opp, mc, oc, reach, &list, n);
+        self.net = saved;
+        v
+    }
+
     /// 자식 국면(ply + 1)의 차례 정보를 채운다. me_after = 수를 둔 뒤 내 말 (넘기면 me 그대로)
     #[inline(always)]
     fn set_child(&mut self, ply: usize, me: u64, me_after: u64) {
@@ -1190,7 +1201,7 @@ impl SliderAi {
         }
         score += self.tune.nt_me * self.cyc[0] + self.tune.nt_opp * self.cyc[1] + self.tune.pos_nx * self.cyc[2] + self.tune.mob_oc * self.cyc[3];
         if let Some(net) = &self.net {
-            score += net.eval(tiles, me, opp, &self.feature);
+            score += net.eval_turn(tiles, me, opp, mc, oc, &self.feature);
         }
         score
     }

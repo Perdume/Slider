@@ -45,6 +45,11 @@ fn run() -> Result<(), String> {
     let data = opt.get("data").ok_or("--data 가 필요합니다")?.clone();
     let out = opt.get("out").cloned().unwrap_or_else(|| "net.txt".to_string());
     let weights = EvalWeights::from_argument(opt.get("weights").map(String::as_str))?;
+    // 기준선(선형 평가)은 엔진이 실제로 쓰는 것과 같게: 가중치 + 순환 규칙 요소(nt_me 등). --tune 기본 game
+    let tune = match opt.get("tune").map(String::as_str) {
+        None | Some("game") => slider::ai::Tunables::game(),
+        Some(t) => slider::ai::Tunables::parse(t)?,
+    };
     let epochs: usize = cli::get(&opt, "epochs", 40)?;
     let batch: usize = cli::get(&opt, "batch", 256)?;
     let lr: f32 = cli::get(&opt, "lr", 0.003)?;
@@ -61,7 +66,7 @@ fn run() -> Result<(), String> {
 
     let mut rows = Vec::new();
     for path in data.split(',') {
-        rows.extend(load_rows(path.trim(), &weights)?);
+        rows.extend(load_rows(path.trim(), &weights, tune)?);
     }
     if rows.len() < 100 {
         return Err(format!("학습 국면이 너무 적습니다: {}", rows.len()));
@@ -269,7 +274,9 @@ fn shuffle(order: &mut [usize], state: &mut u64) {
 
 // ----------------------------------------------------------------------------------------------
 
-fn load_rows(path: &str, weights: &EvalWeights) -> Result<Vec<Row>, String> {
+fn load_rows(path: &str, weights: &EvalWeights, tune: slider::ai::Tunables) -> Result<Vec<Row>, String> {
+    let mut engine = slider::ai::SliderAi::with_weights(10, 1, weights);
+    engine.set_tunables(tune);
     let text = std::fs::read_to_string(path).map_err(|e| format!("{}: {}", path, e))?;
     let mut rows = Vec::new();
     let mut skipped = 0usize;
@@ -292,14 +299,15 @@ fn load_rows(path: &str, weights: &EvalWeights) -> Result<Vec<Row>, String> {
         if features.len() != weights::COUNT {
             return Err(format!("{}:{}: features 개수가 {} 가 아닙니다", path, n + 1, weights::COUNT));
         }
-        let lin: f64 = features.iter().zip(weights.values.iter()).map(|(f, w)| f * *w as f64).sum();
-        let mut ints = [0i32; weights::COUNT];
-        for (dst, &v) in ints.iter_mut().zip(features.iter()) {
-            *dst = v as i32;
-        }
         let (tiles, me, opp) = (get("tiles")? as u64, get("me")? as u64, get("opp")? as u64);
+        // 순환 규칙 데이터면 mc / oc 가 있다 (없으면 자유 규칙: me / opp)
+        let mc = f.get("mc").and_then(|v| v.parse::<u64>().ok()).unwrap_or(me);
+        let oc = f.get("oc").and_then(|v| v.parse::<u64>().ok()).unwrap_or(opp);
+        let _ = &features;
+        let ints = engine.features_turn(tiles, me, opp, mc, oc);
+        let lin = engine.static_eval_turn(tiles, me, opp, mc, oc) as f64;
         let mut buf = [0u16; MAX_ACTIVE];
-        let count = nnue::active_inputs(tiles, me, opp, &mut buf);
+        let count = nnue::active_inputs_turn(tiles, me, opp, mc, oc, &mut buf);
         rows.push(Row {
             // game 번호는 파일마다 0부터 시작하므로 파일을 구분하려고 큰 수를 더하지 않고 그대로 쓴다 (80/20 분할용)
             game: get("game")? as usize,

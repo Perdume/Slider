@@ -1,4 +1,50 @@
 [
- {"key": "s4_30ms", "note": "[순환] SPSA 4차(240회) 후보 vs 게임 설정, 30ms", "a": ["--a", "{REPO}/weights/spsa4_candidate.json", "--opts-a", "lmr2,hm", "--tune-a", "margin=97,trap=103,plan_ply=16,lmr_depth=2,lmr_index=1,lmr2_depth=3,lmr2_index=1,nt_me=755,nt_opp=-379,pos_nx=4,mob_oc=12"], "b": ["--b", "{W}", "--opts-b", "lmr2,hm", "--tune-b", "game"], "time_ms": 30, "max_games": 2000},
- {"key": "s4_150ms", "note": "[순환] SPSA 4차(240회) 후보 vs 게임 설정, 150ms", "a": ["--a", "{REPO}/weights/spsa4_candidate.json", "--opts-a", "lmr2,hm", "--tune-a", "margin=97,trap=103,plan_ply=16,lmr_depth=2,lmr_index=1,lmr2_depth=3,lmr2_index=1,nt_me=755,nt_opp=-379,pos_nx=4,mob_oc=12"], "b": ["--b", "{W}", "--opts-b", "lmr2,hm", "--tune-b", "game"], "time_ms": 150, "max_games": 800}
+ {
+  "key": "nn_30ms",
+  "note": "[순환] 게임 설정 + 신경망(탐색 점수로 학습, mc/oc 입력) vs 게임 설정, 30ms",
+  "a": [
+   "--a",
+   "{W}",
+   "--opts-a",
+   "lmr2,hm",
+   "--tune-a",
+   "game",
+   "--net-a",
+   "{REPO}/weights/net_cycle.txt"
+  ],
+  "b": [
+   "--b",
+   "{W}",
+   "--opts-b",
+   "lmr2,hm",
+   "--tune-b",
+   "game"
+  ],
+  "time_ms": 30,
+  "max_games": 2000
+ },
+ {
+  "key": "nn_150ms",
+  "note": "[순환] 게임 설정 + 신경망 vs 게임 설정, 150ms",
+  "a": [
+   "--a",
+   "{W}",
+   "--opts-a",
+   "lmr2,hm",
+   "--tune-a",
+   "game",
+   "--net-a",
+   "{REPO}/weights/net_cycle.txt"
+  ],
+  "b": [
+   "--b",
+   "{W}",
+   "--opts-b",
+   "lmr2,hm",
+   "--tune-b",
+   "game"
+  ],
+  "time_ms": 150,
+  "max_games": 800
+ }
 ]

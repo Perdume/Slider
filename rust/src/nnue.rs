@@ -14,8 +14,11 @@ use crate::bitboard::CELLS;
 pub const TILE_OFFSET: usize = 0;
 pub const MINE_OFFSET: usize = CELLS;
 pub const THEIRS_OFFSET: usize = 2 * CELLS;
-/// 전체 입력 개수
-pub const INPUTS: usize = 3 * CELLS;
+/// 순환 규칙: 지금 움직일 내 말(mc) / 상대가 다음에 움직일 말(oc) 이 있는 칸 (자유 규칙이면 me / opp 와 같음)
+pub const MC_OFFSET: usize = 3 * CELLS;
+pub const OC_OFFSET: usize = 4 * CELLS;
+/// 전체 입력 개수 (해시는 앞의 3면만 쓴다)
+pub const INPUTS: usize = 5 * CELLS;
 /// 켜질 수 있는 입력의 최대 개수 (타일 49 + 말 49 + 49 는 이론상 한계이고, 실제 게임은 20개 안팎)
 pub const MAX_ACTIVE: usize = INPUTS;
 
@@ -41,6 +44,20 @@ static KEYS: [u64; INPUTS] = build_keys();
 pub fn active_inputs(tiles: u64, me: u64, opp: u64, out: &mut [u16; MAX_ACTIVE]) -> usize {
     let mut n = 0;
     for (mask, offset) in [(tiles, TILE_OFFSET), (me, MINE_OFFSET), (opp, THEIRS_OFFSET)] {
+        let mut m = mask;
+        while m != 0 {
+            out[n] = (offset + m.trailing_zeros() as usize) as u16;
+            n += 1;
+            m &= m - 1;
+        }
+    }
+    n
+}
+
+/// 신경망 입력: 타일, me, opp, 지금 움직일 내 말(mc), 상대가 다음에 움직일 말(oc)
+pub fn active_inputs_turn(tiles: u64, me: u64, opp: u64, mc: u64, oc: u64, out: &mut [u16; MAX_ACTIVE]) -> usize {
+    let mut n = 0;
+    for (mask, offset) in [(tiles, TILE_OFFSET), (me, MINE_OFFSET), (opp, THEIRS_OFFSET), (mc, MC_OFFSET), (oc, OC_OFFSET)] {
         let mut m = mask;
         while m != 0 {
             out[n] = (offset + m.trailing_zeros() as usize) as u16;
@@ -214,8 +231,13 @@ impl Network {
 
     /// 국면의 신경망 출력 (평가 점수 단위로 환산한 정수). 둘 차례인 쪽(me) 기준. features 는 같은 국면의 선형 평가 특징.
     pub fn eval(&self, tiles: u64, me: u64, opp: u64, features: &[i32; weights::COUNT]) -> i32 {
+        self.eval_turn(tiles, me, opp, me, opp, features)
+    }
+
+    /// 순환 규칙용: mc = 지금 움직일 내 말, oc = 상대가 다음에 움직일 말
+    pub fn eval_turn(&self, tiles: u64, me: u64, opp: u64, mc: u64, oc: u64, features: &[i32; weights::COUNT]) -> i32 {
         let mut active = [0u16; MAX_ACTIVE];
-        let n = active_inputs(tiles, me, opp, &mut active);
+        let n = active_inputs_turn(tiles, me, opp, mc, oc, &mut active);
         let mut acc = [0.0f32; HIDDEN];
         self.accumulate(&active[..n], &scale_features(features), &mut acc);
         (self.output(&acc) * OUT_SCALE).round() as i32

@@ -8,6 +8,7 @@
 //! 옵션: --rules cycle|free (기본 cycle = 말 하나씩 시계 방향, free = 예전 규칙)
 //!       --opts 탐색 개선 선택지 (pvs,lmr,nmp)
 //!       --games --time-ms --depth --random-plies --epsilon --max-plies --threads --seed --weights --out
+//!       --tune 탐색 상수/순환 규칙 평가 요소 (기본 default, game = 게임 설정)
 //!       --net 신경망 파일 (있으면 평가에 더한다)
 //!       --stop-file 경로 / --parent-pid N  멈춤 신호 (cli::Stop 참고)
 //!       --positions yes  각 줄에 국면(tiles, me, opp)도 기록한다 (신경망 학습용. 기본은 기록하지 않음)
@@ -76,7 +77,15 @@ fn run() -> Result<(), String> {
     let next_game = AtomicUsize::new(0);
     let start = Instant::now();
     let opts = slider::ai::SearchOptions::parse(opt.get("opts").map(String::as_str).unwrap_or(""))?;
-    let pair = [Player::new(weights.clone(), net.clone()).with_options(opts), Player::new(weights.clone(), net.clone()).with_options(opts)];
+    let tune = match opt.get("tune").map(String::as_str) {
+        None | Some("default") => slider::ai::Tunables::default(),
+        Some("game") => slider::ai::Tunables::game(),
+        Some(t) => slider::ai::Tunables::parse(t)?,
+    };
+    let pair = [
+        Player::new(weights.clone(), net.clone()).with_options(opts).with_tunables(tune),
+        Player::new(weights.clone(), net.clone()).with_options(opts).with_tunables(tune),
+    ];
 
     std::thread::scope(|scope| {
         for _ in 0..threads {
