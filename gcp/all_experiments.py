@@ -52,6 +52,9 @@ SETTINGS = {
     "RUN_TUNE": env("RUN_TUNE", True),
     "RUN_NN": env("RUN_NN", True),
     "RUN_EXTRA": env("RUN_EXTRA", True),
+    "RUN_SMP": env("RUN_SMP", True),
+    "RUN_BIG_NN": env("RUN_BIG_NN", True),
+    "BIG_HIDDEN": env("BIG_HIDDEN", 128),
 }
 S = SETTINGS
 THREADS = os.cpu_count() or 2
@@ -94,14 +97,14 @@ def fmt(r):
             f"({r['eloLow']:+.0f} ~ {r['eloHigh']:+.0f}), SPRT {r.get('sprt', '-')}")
 
 
-def sprt(key, a_args, b_args, limit=None, note="", max_games=None):
+def sprt(key, a_args, b_args, limit=None, note="", max_games=None, game_threads=None, bin_dir=None):
     if key in state:
         log(f"[{key}] 이미 끝남: {fmt(state[key])}")
         return state[key]
     limit = limit or ["--time-ms", S["MATCH_TIME_MS"]]
-    lines = run(BIN / "matchup", [*a_args, *b_args, "--games", max_games or S["SPRT_MAX_GAMES"], *limit, "--max-plies", S["MAX_PLIES"],
-                                  "--sprt-elo0", S["SPRT_ELO0"], "--sprt-elo1", S["SPRT_ELO1"],
-                                  "--threads", THREADS, "--seed", S["SEED"] + 1000])
+    lines = run((bin_dir or BIN) / "matchup", [*a_args, *b_args, "--games", max_games or S["SPRT_MAX_GAMES"], *limit,
+                                               "--max-plies", S["MAX_PLIES"], "--sprt-elo0", S["SPRT_ELO0"], "--sprt-elo1", S["SPRT_ELO1"],
+                                               "--threads", game_threads or THREADS, "--seed", S["SEED"] + 1000])
     r = json.loads([l for l in lines if l.startswith("RESULT ")][-1][len("RESULT "):])
     r["note"] = note
     state[key] = r
@@ -195,6 +198,32 @@ if S["RUN_EXTRA"]:
              note="신경망에 시간 1.6배 (48 vs 30ms, 속도 손해 보정)")
         sprt("nn_150ms", ["--a", W, "--net-a", net], ["--b", W], limit=t(150), note="신경망 vs 선형 (150ms)", max_games=800)
         sprt("nn_300ms", ["--a", W, "--net-a", net], ["--b", W], limit=t(300), note="신경망 vs 선형 (300ms)", max_games=400)
+
+# ---------------------------------------------------------------- E. 병렬 탐색, 큰 신경망
+if S["RUN_SMP"]:
+    # 한 수를 스레드 4개로 탐색 (A) vs 1개 (B). 동시에 두는 판 수는 코어 / 4 로 줄여서 서로 코어를 뺏지 않게 한다
+    gt = max(1, THREADS // 4)
+    sprt("smp4_30ms", ["--a", W, "--search-threads-a", 4], ["--b", W], note="병렬 탐색 4스레드 vs 1스레드 (30ms)", game_threads=gt)
+    sprt("smp4_150ms", ["--a", W, "--search-threads-a", 4], ["--b", W], limit=["--time-ms", 150],
+         note="병렬 탐색 4스레드 vs 1스레드 (150ms)", game_threads=gt, max_games=300)
+
+if S["RUN_BIG_NN"]:
+    h = S["BIG_HIDDEN"]
+    big_target = WORK / f"target_{h}"
+    run("cargo", ["build", "--release", "--bin", "trainnet", "--bin", "matchup"], cwd=REPO / "rust",
+        env_extra={"SLIDER_HIDDEN": str(h), "CARGO_TARGET_DIR": str(big_target)})
+    big_bin = big_target / "release"
+    big_net = OUT / "data" / f"net_feat_{h}_{tune_data.stem}.txt"
+    if not big_net.exists():
+        lines = run(big_bin / "trainnet", ["--data", tune_data, "--weights", W, "--out", big_net, "--epochs", 30,
+                                           "--lambda", 1.0, "--features", "yes", "--seed", S["SEED"]])
+        best = [l for l in lines if "가장 좋은 검증 손실" in l]
+        state[f"nn{h}_train"] = {"note": best[-1].strip() if best else ""}
+        save_state()
+    sprt(f"nn{h}_depth", ["--a", W, "--net-a", big_net], ["--b", W], limit=["--time-ms", 100000, "--depth", S["NN_DEPTH"]],
+         note=f"신경망 은닉 {h}, 깊이 {S['NN_DEPTH']} 고정", bin_dir=big_bin)
+    sprt(f"nn{h}_time", ["--a", W, "--net-a", big_net], ["--b", W], note=f"신경망 은닉 {h}, 수당 {S['MATCH_TIME_MS']}ms",
+         bin_dir=big_bin)
 
 # ---------------------------------------------------------------- 요약
 lines = [f"설정: {SETTINGS} | threads {THREADS} | 이번 실행 {time.time() - t_start:.0f}초"]

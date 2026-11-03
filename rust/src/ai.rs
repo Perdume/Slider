@@ -9,6 +9,7 @@
 //! 그래서 안전한 수들 중에서는 "상대가 직접적인 위협에만 반응한다"고 가정한 탐색으로 공격 계획을 세운다.
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::hash::{BuildHasherDefault, Hasher};
 use std::time::{Duration, Instant};
@@ -198,8 +199,14 @@ pub struct SliderAi {
     net: Option<Arc<Network>>,
     feature: [i32; weights::COUNT],
 
-    /// 트랜스포지션 테이블. 칸 하나 = [tiles, me, opp, score | move << 32, depth | flag << 8 | mode << 16]
-    tt: Vec<[u64; 5]>,
+    /// 트랜스포지션 테이블 (병렬 탐색 때 스레드끼리 공유). 칸 하나 = [tiles, me, opp, score | move << 32, depth | flag << 8 | mode << 16]
+    tt: Arc<SharedTt>,
+    /// 한 수를 탐색할 때 쓰는 스레드 수 (Lazy SMP). 1 이면 예전과 똑같이 한 스레드로 탐색한다
+    threads: usize,
+    /// 0 = 주 스레드, 1.. = 도우미 스레드 (도우미는 깊이를 건너뛰며 탐색해 주 스레드와 다른 곳을 먼저 채운다)
+    helper_id: usize,
+    /// 주 스레드가 끝나면 도우미를 멈추는 신호
+    stop: Option<Arc<AtomicBool>>,
 
     moves: Vec<Vec<i32>>,
     keys: Vec<Vec<i32>>,
@@ -218,6 +225,54 @@ pub struct SliderAi {
     aborted: bool,
     may_abort: bool,
     opt_ply: i32,
+}
+
+/// 스레드끼리 공유하는 트랜스포지션 테이블. 칸마다 값 5개 + 검사값(5개의 XOR)을 원자적으로 쓴다.
+/// 여러 스레드가 동시에 같은 칸을 쓰다 섞인 값은 검사값이 맞지 않아 빈 칸으로 본다 (잠금 없이 안전하게).
+pub struct SharedTt {
+    cells: Vec<AtomicU64>,
+}
+
+impl SharedTt {
+    fn new(entries: usize) -> Self {
+        let n = entries * 6;
+        let layout = std::alloc::Layout::array::<AtomicU64>(n).expect("TT 크기");
+        // 0으로 채운 메모리를 운영체제에서 바로 받는다 (쓰지 않은 칸은 실제로 건드리지 않아서 빠르다). 0 은 AtomicU64 의 올바른 값이다.
+        let cells = unsafe {
+            let ptr = std::alloc::alloc_zeroed(layout) as *mut AtomicU64;
+            if ptr.is_null() {
+                std::alloc::handle_alloc_error(layout);
+            }
+            Vec::from_raw_parts(ptr, n, n)
+        };
+        SharedTt { cells }
+    }
+
+    #[inline(always)]
+    fn load(&self, idx: usize) -> [u64; 5] {
+        let c = &self.cells[idx * 6..idx * 6 + 6];
+        let e = [
+            c[0].load(Ordering::Relaxed),
+            c[1].load(Ordering::Relaxed),
+            c[2].load(Ordering::Relaxed),
+            c[3].load(Ordering::Relaxed),
+            c[4].load(Ordering::Relaxed),
+        ];
+        if e[0] ^ e[1] ^ e[2] ^ e[3] ^ e[4] == c[5].load(Ordering::Relaxed) {
+            e
+        } else {
+            [0; 5]
+        }
+    }
+
+    #[inline(always)]
+    fn store(&self, idx: usize, e: [u64; 5]) {
+        let c = &self.cells[idx * 6..idx * 6 + 6];
+        for (cell, v) in c.iter().zip(e.iter()) {
+            cell.store(*v, Ordering::Relaxed);
+        }
+        c[5].store(e[0] ^ e[1] ^ e[2] ^ e[3] ^ e[4], Ordering::Relaxed);
+    }
 }
 
 /// 국면 해시. me 는 둘 차례인 쪽의 말, opp 는 반대편 말 비트마스크다.
@@ -249,15 +304,21 @@ impl SliderAi {
     }
 
     pub fn with_weights(time_limit_ms: u64, max_depth: i32, w: &EvalWeights) -> Self {
+        Self::build(time_limit_ms, max_depth, w.values, Arc::new(SharedTt::new(TT_SIZE)))
+    }
+
+    fn build(time_limit_ms: u64, max_depth: i32, weights: [i32; weights::COUNT], tt: Arc<SharedTt>) -> Self {
         SliderAi {
             time_limit_ms,
             opts: SearchOptions::default(),
             max_depth: max_depth.min(MAX_PLY as i32 - 2),
-            weights: w.values,
+            weights,
             net: None,
             feature: [0; weights::COUNT],
-            // vec![0; n] 은 0으로 채운 메모리를 운영체제에서 바로 받아서, 쓰지 않은 칸은 실제로 건드리지 않는다
-            tt: vec![[0; 5]; TT_SIZE],
+            tt,
+            threads: 1,
+            helper_id: 0,
+            stop: None,
             moves: (0..MAX_PLY).map(|_| vec![0; MAX_MOVES]).collect(),
             keys: (0..MAX_PLY).map(|_| vec![0; MAX_MOVES]).collect(),
             killers: [[0; 2]; MAX_PLY],
@@ -272,6 +333,24 @@ impl SliderAi {
             may_abort: false,
             opt_ply: NO_PLAN,
         }
+    }
+
+    /// 한 수를 탐색할 때 쓸 스레드 수 (기본 1). 2 이상이면 전치표를 공유하는 병렬 탐색(Lazy SMP)을 한다.
+    pub fn set_threads(&mut self, threads: usize) {
+        self.threads = threads.max(1);
+    }
+
+    /// 같은 설정과 전치표를 쓰는 도우미 탐색기
+    fn helper(&self, id: usize, stop: Arc<AtomicBool>) -> SliderAi {
+        let mut a = SliderAi::build(self.time_limit_ms, self.max_depth, self.weights, self.tt.clone());
+        a.net = self.net.clone();
+        a.opts = self.opts;
+        a.game_history = self.game_history.clone();
+        a.opt_ply = self.opt_ply;
+        a.path[0] = self.path[0];
+        a.helper_id = id;
+        a.stop = Some(stop);
+        a
     }
 
     /// 탐색 개선 선택지 (기본은 모두 끔).
@@ -341,7 +420,29 @@ impl SliderAi {
     }
 
     /// 반복 심화로 root_moves 를 탐색하고 마지막으로 끝낸 깊이의 점수 순서로 정렬한다. 끝낸 깊이를 돌려준다.
+    /// 스레드가 2개 이상이면 도우미들이 같은 전치표를 채우며 함께 탐색하고, 결과는 주 스레드의 것을 쓴다.
     fn iterate(&mut self, tiles: u64, me: u64, opp: u64, root_moves: &mut [i32], scores: &mut [i32], until: Instant) -> i32 {
+        if self.threads <= 1 {
+            return self.iterate_inner(tiles, me, opp, root_moves, scores, until);
+        }
+        let stop = Arc::new(AtomicBool::new(false));
+        let mut helpers: Vec<SliderAi> = (1..self.threads).map(|id| self.helper(id, stop.clone())).collect();
+        let root: Vec<i32> = root_moves.to_vec();
+        std::thread::scope(|scope| {
+            for h in helpers.iter_mut() {
+                let mut moves = root.clone();
+                scope.spawn(move || {
+                    let mut sc = vec![0i32; moves.len()];
+                    h.iterate_inner(tiles, me, opp, &mut moves, &mut sc, until);
+                });
+            }
+            let depth = self.iterate_inner(tiles, me, opp, root_moves, scores, until);
+            stop.store(true, Ordering::Relaxed);
+            depth
+        })
+    }
+
+    fn iterate_inner(&mut self, tiles: u64, me: u64, opp: u64, root_moves: &mut [i32], scores: &mut [i32], until: Instant) -> i32 {
         self.deadline = until;
         self.aborted = false;
         let n = root_moves.len();
@@ -349,6 +450,13 @@ impl SliderAi {
         let mut work_scores = vec![0i32; n];
         let mut done = 0;
         for depth in 1..=self.max_depth {
+            // 도우미는 깊이를 하나씩 건너뛰어 주 스레드보다 앞서 깊은 곳의 전치표를 채운다
+            if self.helper_id > 0 && depth > 1 && (depth as usize + self.helper_id) % 2 == 0 {
+                continue;
+            }
+            if self.stop.as_ref().map_or(false, |s| s.load(Ordering::Relaxed)) {
+                break;
+            }
             for h in self.history.iter_mut() {
                 *h >>= 1;
             }
@@ -419,7 +527,10 @@ impl SliderAi {
 
     fn negamax(&mut self, tiles: u64, me: u64, opp: u64, depth: i32, alpha: i32, beta: i32, ply: usize) -> i32 {
         self.nodes += 1;
-        if self.nodes & 1023 == 0 && self.may_abort && Instant::now() > self.deadline {
+        if self.nodes & 1023 == 0
+            && self.may_abort
+            && (Instant::now() > self.deadline || self.stop.as_ref().map_or(false, |s| s.load(Ordering::Relaxed)))
+        {
             self.aborted = true;
         }
         if self.aborted {
@@ -452,7 +563,7 @@ impl SliderAi {
         };
         let idx = (mix(hash.wrapping_add(mode as u64)) as usize) & (TT_SIZE - 1);
         let mut tt_best = -1;
-        let entry = self.tt[idx];
+        let entry = self.tt.load(idx);
         if entry[1] == me && entry[2] == opp && entry[0] == tiles && ((entry[4] >> 16) & 0xff) as i32 == mode {
             tt_best = (entry[3] >> 32) as u32 as i32;
             if (entry[4] & 0xff) as u8 as i8 as i32 >= depth {
@@ -574,13 +685,16 @@ impl SliderAi {
         } else {
             EXACT
         };
-        self.tt[idx] = [
-            tiles,
-            me,
-            opp,
-            to_tt(best, ply as i32) as u32 as u64 | (best_move as u32 as u64) << 32,
-            (depth as i8 as u8 as u64) | (flag as u64) << 8 | (mode as u8 as u64) << 16,
-        ];
+        self.tt.store(
+            idx,
+            [
+                tiles,
+                me,
+                opp,
+                to_tt(best, ply as i32) as u32 as u64 | (best_move as u32 as u64) << 32,
+                (depth as i8 as u8 as u64) | (flag as u64) << 8 | (mode as u8 as u64) << 16,
+            ],
+        );
         best
     }
 

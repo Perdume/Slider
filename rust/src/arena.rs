@@ -31,15 +31,22 @@ pub struct Player {
     pub opts: SearchOptions,
     /// 이 쪽만 다른 수당 시간을 쓸 때 (None 이면 Config 의 시간)
     pub time_ms: Option<u64>,
+    /// 한 수를 탐색할 때 쓰는 스레드 수 (병렬 탐색). 기본 1
+    pub search_threads: usize,
 }
 
 impl Player {
     pub fn new(weights: EvalWeights, net: Option<Arc<Network>>) -> Self {
-        Player { weights, net, opts: SearchOptions::default(), time_ms: None }
+        Player { weights, net, opts: SearchOptions::default(), time_ms: None, search_threads: 1 }
     }
 
     pub fn with_options(mut self, opts: SearchOptions) -> Self {
         self.opts = opts;
+        self
+    }
+
+    pub fn with_search_threads(mut self, n: usize) -> Self {
+        self.search_threads = n.max(1);
         self
     }
 
@@ -127,6 +134,7 @@ pub fn play(
                 let mut engine = SliderAi::with_weights(players[side].time_ms.unwrap_or(cfg.time_ms), cfg.max_depth, &players[side].weights);
                 engine.set_net(players[side].net.clone());
                 engine.set_options(players[side].opts);
+                engine.set_threads(players[side].search_threads);
                 engine.set_game_history(counts.clone());
                 let result = engine.search(tiles, me, opp);
                 let mut chosen = result.mv;
