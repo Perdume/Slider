@@ -29,6 +29,14 @@ SEED = 7
 # 탐색 상수: 이름, 시작값(game), 흔드는 폭, 최소, 최대
 T_PARAMS = [("margin", 39, 8, 10, 120), ("trap", 38, 12, 0, 200), ("plan_ply", 9, 1, 3, 13),
             ("lmr_depth", 2, 1, 1, 6), ("lmr_index", 1, 1, 1, 8), ("lmr2_depth", 3, 1, 2, 8), ("lmr2_index", 6, 1, 2, 12)]
+# 더 맞출 상수: SPSA_EXTRA="nt_me:0:40:-600:600,nt_opp:0:40:-600:600" (이름:시작:폭:최소:최대)
+for part in filter(None, os.environ.get("SPSA_EXTRA", "").split(",")):
+    n, a, c, lo, hi = part.split(":")
+    T_PARAMS.append((n, float(a), float(c), float(lo), float(hi)))
+# 시작값 바꾸기: SPSA_START="margin=77,trap=24,..." (지금 게임 설정이 바뀌었을 때)
+_start = dict(kv.split("=") for kv in filter(None, os.environ.get("SPSA_START", "").split(",")))
+T_PARAMS = [(n, float(_start.get(n, a)), c, lo, hi) for n, a, c, lo, hi in T_PARAMS]
+OPTS = os.environ.get("SPSA_OPTS", "lmr2")  # 양쪽 탐색 선택지 (예: lmr2,lmp)
 W_NAMES = ["threat1", "threat2", "threat2PerThreat", "mobility", "reach", "plan2", "plan3", "plan4", "plan5", "position", "tempo"]
 w0 = json.loads(W.read_text())
 W_PARAMS = [(n, float(w0[n]), max(4.0, 0.15 * abs(w0[n])), w0[n] - max(200.0, 3 * abs(w0[n])), w0[n] + max(200.0, 3 * abs(w0[n])))
@@ -73,8 +81,8 @@ def main():
         for i, d in enumerate(deltas):
             plus, minus = np.clip(theta + C * d, LO, HI), np.clip(theta - C * d, LO, HI)
             pw, mw = write_w(WORK / f"plus{i}.json", plus), write_w(WORK / f"minus{i}.json", minus)
-            cmd = [BIN / "matchup", "--rules", "cycle", "--a", pw, "--opts-a", "lmr2", "--tune-a", tune_str(plus),
-                   "--b", mw, "--opts-b", "lmr2", "--tune-b", tune_str(minus), "--games", GAMES, "--time-ms", TIME_MS,
+            cmd = [BIN / "matchup", "--rules", "cycle", "--a", pw, "--opts-a", OPTS, "--tune-a", tune_str(plus),
+                   "--b", mw, "--opts-b", OPTS, "--tune-b", tune_str(minus), "--games", GAMES, "--time-ms", TIME_MS,
                    "--max-plies", MAX_PLIES, "--threads", max(1, THREADS // n), "--seed", 50_000 + k0 + i]
             procs.append(subprocess.Popen(list(map(str, cmd)), stdout=subprocess.PIPE, text=True))
         nets = []
@@ -98,7 +106,7 @@ def main():
     for key, ms, mg in (("final_30ms", 30, 2000), ("final_150ms", 150, 600)):
         if any(r.startswith(key) for r in st["results"]):
             continue
-        r = matchup(["--rules", "cycle", "--a", new_w, "--opts-a", "lmr2", "--tune-a", tune, "--b", W, "--opts-b", "lmr2",
+        r = matchup(["--rules", "cycle", "--a", new_w, "--opts-a", OPTS, "--tune-a", tune, "--b", W, "--opts-b", "lmr2",
                      "--tune-b", "game", "--games", mg, "--time-ms", ms, "--max-plies", 1000, "--sprt-elo0", 0,
                      "--sprt-elo1", 25, "--threads", THREADS, "--seed", 1001])
         st["results"].append(f"{key} 새 상수+가중치 vs 지금 게임 설정: {r['aWins']}승 {r['draws']}무 {r['bWins']}패 ({r['games']}판) "
