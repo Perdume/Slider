@@ -82,13 +82,45 @@ def recurrent_fn(params, rng, action, emb):
     return out, (nt, nme, nopp, new_done)
 
 
-def run_mcts(params, rng, tiles, me, opp, num_simulations, max_considered=16):
-    mask = jax.vmap(legal_mask)(tiles, me, opp)
+def run_mcts(params, rng, tiles, me, opp, num_simulations, max_considered=16, invalid=None):
+    mask = jax.vmap(legal_mask)(tiles, me, opp) if invalid is None else ~invalid
     logits, value = apply_net(params, jax.vmap(observe)(tiles, me, opp))
     done = jnp.zeros(tiles.shape[0], bool)
     root = mctx.RootFnOutput(prior_logits=masked_logits(logits, mask), value=value, embedding=(tiles, me, opp, done))
     return mctx.gumbel_muzero_policy(params, rng, root, recurrent_fn, num_simulations=num_simulations,
                                      invalid_actions=~mask, max_num_considered_actions=max_considered)
+
+
+# ------------------------------------------------------------------ 형세에 따른 무승부 판단 (실제 판의 3회 반복)
+def draw_moves(tiles, me, opp, hist, ply, max_len):
+    """수마다: 그 수를 두면 같은 국면이 3번째가 되어 무승부로 끝나는지 [A]. (MCTS 는 실제 판의 기록을 모르므로 루트에서 따로 본다)"""
+    _, srcs = sj.legal(tiles, me, opp)
+
+    def after(a):
+        t2, m2, dst = sj.apply_move(tiles, me, srcs, a)
+        return sj.pos_hash(t2, opp, m2), dst == sj.GOAL
+
+    hs, wins = jax.vmap(after)(jnp.arange(sj.NUM_MOVES))
+    hs = jnp.concatenate([hs, sj.pos_hash(tiles, opp, me)[None]], 0)  # 통과
+    wins = jnp.concatenate([wins, jnp.array([False])])
+    upto = jnp.arange(max_len + 1) <= ply
+    counts = ((hist[None, :, :] == hs[:, None, :]).all(-1) & upto[None]).sum(-1)
+    return (counts >= 2) & ~wins
+
+
+def choose_action(params, key, tiles, me, opp, hist, ply, num_simulations, max_len, draw_threshold):
+    """MCTS 로 수를 고른다. draw_threshold 가 있으면: 이기는 중(가치 > 기준)이면 무승부가 되는 수를 빼고,
+    지는 중(가치 < -기준)이면 무승부가 되는 수가 있을 때 그 수를 둔다. 비슷하면 그대로."""
+    if draw_threshold is None:
+        out = run_mcts(params, key, tiles, me, opp, num_simulations)
+        return out.action, out
+    mask = jax.vmap(legal_mask)(tiles, me, opp)
+    dm = jax.vmap(draw_moves, in_axes=(0, 0, 0, 0, None, None))(tiles, me, opp, hist, ply, max_len) & mask
+    _, v = apply_net(params, jax.vmap(observe)(tiles, me, opp))
+    avoid = (v > draw_threshold) & (mask & ~dm).any(-1)
+    out = run_mcts(params, key, tiles, me, opp, num_simulations, invalid=~mask | (avoid[:, None] & dm))
+    take_draw = (v < -draw_threshold) & dm.any(-1)
+    return jnp.where(take_draw, jnp.argmax(dm, -1), out.action), out
 
 
 # ------------------------------------------------------------------ 판 진행 (B 판 동시, 최대 max_len 수)
@@ -113,8 +145,8 @@ def _advance(tiles, me, opp, hist, done, winner, ply, action, max_len):
     return keep(tiles, nt), keep(me, nme), keep(opp, nopp), hist, done | win | rep, winner
 
 
-@functools.partial(jax.jit, static_argnames=("batch", "num_simulations", "max_len"))
-def self_play(params, rng, batch, num_simulations, max_len):
+@functools.partial(jax.jit, static_argnames=("batch", "num_simulations", "max_len", "draw_threshold"))
+def self_play(params, rng, batch, num_simulations, max_len, draw_threshold=None):
     """B 판을 끝까지 둔다. 반환: 입력[T,B,147], 정책 목표[T,B,A], 그 수에서 둘 차례였는지[T,B], 승자[B] (-1 무승부, 0 먼저, 1 나중)."""
     tiles, me, opp, hist = _start(batch, max_len)
     init = (tiles, me, opp, hist, jnp.zeros(batch, bool), jnp.full(batch, -1, jnp.int32))
@@ -122,9 +154,9 @@ def self_play(params, rng, batch, num_simulations, max_len):
     def body(carry, inp):
         tiles, me, opp, hist, done, winner = carry
         ply, key = inp
-        out = run_mcts(params, key, tiles, me, opp, num_simulations)
+        action, out = choose_action(params, key, tiles, me, opp, hist, ply, num_simulations, max_len, draw_threshold)
         rec = (jax.vmap(observe)(tiles, me, opp), out.action_weights, ~done)
-        new = _advance(tiles, me, opp, hist, done, winner, ply, out.action, max_len)
+        new = _advance(tiles, me, opp, hist, done, winner, ply, action, max_len)
         return new, rec
 
     keys = jax.random.split(rng, max_len)
@@ -186,8 +218,8 @@ def random_policy(tiles, me, opp, key):
     return jnp.where(valid.any(), jnp.argmax(score), PASS)
 
 
-@functools.partial(jax.jit, static_argnames=("batch", "num_simulations", "max_len", "opponent"))
-def evaluate(params, rng, batch, num_simulations, max_len, opponent):
+@functools.partial(jax.jit, static_argnames=("batch", "num_simulations", "max_len", "opponent", "draw_threshold"))
+def evaluate(params, rng, batch, num_simulations, max_len, opponent, draw_threshold=None):
     """신경망+MCTS 가 판의 절반은 먼저, 절반은 나중에 둔다. 반환: (이긴 판, 무승부, 진 판)."""
     opp_policy = greedy_policy if opponent == "greedy" else random_policy
     tiles, me, opp, hist = _start(batch, max_len)
@@ -199,7 +231,7 @@ def evaluate(params, rng, batch, num_simulations, max_len, opponent):
         ply, key = inp
         k1, k2 = jax.random.split(key)
         agent_turn = agent_first == (ply % 2 == 0)
-        mcts_action = run_mcts(params, k1, tiles, me, opp, num_simulations).action
+        mcts_action, _ = choose_action(params, k1, tiles, me, opp, hist, ply, num_simulations, max_len, draw_threshold)
         other = jax.vmap(opp_policy)(tiles, me, opp, jax.random.split(k2, batch))
         action = jnp.where(agent_turn, mcts_action, other)
         return _advance(tiles, me, opp, hist, done, winner, ply, action, max_len), None
