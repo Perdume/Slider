@@ -1,11 +1,15 @@
 //! AI 끼리 2v2 한 판을 두는 공용 코드. selfplay(데이터 생성)와 matchup(가중치 비교)이 같이 쓴다.
 //! 규칙은 실제 게임과 같다: 한 턴에 말 하나, 어느 말이든 골에 멈추면 승리,
 //! 둘 수 있는 수가 없으면 차례 넘김, 같은 국면 3번째 반복은 무승부.
-//! 쪽(side) 0 이 먼저 두고 위쪽 귀퉁이에서, 쪽 1 이 아래쪽 귀퉁이에서 시작한다.
+//! 규칙은 두 가지 (Rules):
+//! - Cycle (기본, 지금 게임): 대각선 배치. 왼쪽 위 쪽1, 오른쪽 위 쪽0, 왼쪽 아래 쪽0, 오른쪽 아래 쪽1.
+//!   차례는 쪽0(먼저 두는 쪽, 사람)부터 시계 방향으로 말 하나씩: 오른쪽 위 -> 오른쪽 아래 -> 왼쪽 아래 -> 왼쪽 위 -> ...
+//!   그 차례의 말이 움직일 수 없으면 넘긴다 (다음 차례는 순서대로 다음 말).
+//! - Free (예전): 쪽 0 이 위쪽 귀퉁이, 쪽 1 이 아래쪽 귀퉁이. 차례마다 자기 말 둘 중 아무거나 움직인다.
 
 use std::sync::Arc;
 
-use crate::ai::{position_hash, History, SearchOptions, SliderAi, Tunables};
+use crate::ai::{generate_turn, next_turn_pieces, turn_hash, History, SearchOptions, SliderAi, Tunables};
 use crate::bitboard::{self as bb, GOAL, MAX_MOVES};
 use crate::javarandom::JavaRandom;
 use crate::nnue::Network;
@@ -22,6 +26,50 @@ pub const START_BOARD: [[u8; 7]; 7] = [
 ];
 pub const SIDE0_START: [(usize, usize); 2] = [(0, 0), (0, 6)];
 pub const SIDE1_START: [(usize, usize); 2] = [(6, 0), (6, 6)];
+/// 순환 규칙의 시작 위치. 각 쪽의 [0] 이 그 쪽에서 먼저 움직이는 말
+pub const CYCLE_SIDE0_START: [(usize, usize); 2] = [(0, 6), (6, 0)];
+pub const CYCLE_SIDE1_START: [(usize, usize); 2] = [(6, 6), (0, 0)];
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Rules {
+    /// 말 하나씩 시계 방향 순서 (지금 게임)
+    Cycle,
+    /// 차례마다 자기 말 아무거나 (예전 게임)
+    Free,
+}
+
+impl Rules {
+    pub fn parse(text: &str) -> Result<Self, String> {
+        match text {
+            "cycle" => Ok(Rules::Cycle),
+            "free" => Ok(Rules::Free),
+            other => Err(format!("규칙은 cycle 또는 free: {}", other)),
+        }
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Rules::Cycle => "cycle",
+            Rules::Free => "free",
+        }
+    }
+
+    /// 시작 국면: (타일, 쪽별 말, 쪽별 다음에 움직일 수 있는 말)
+    pub fn start(self) -> (u64, [u64; 2], [u64; 2]) {
+        let tiles = bb::from_array(&START_BOARD);
+        match self {
+            Rules::Free => {
+                let p = [bb::pieces(&SIDE0_START), bb::pieces(&SIDE1_START)];
+                (tiles, p, p)
+            }
+            Rules::Cycle => {
+                let p = [bb::pieces(&CYCLE_SIDE0_START), bb::pieces(&CYCLE_SIDE1_START)];
+                let c = [bb::pieces(&CYCLE_SIDE0_START[..1]), bb::pieces(&CYCLE_SIDE1_START[..1])];
+                (tiles, p, c)
+            }
+        }
+    }
+}
 
 /// 한 쪽의 평가: 선형 가중치 + (선택) 신경망
 #[derive(Clone)]
@@ -72,11 +120,12 @@ pub struct Config {
     pub random_plies: usize,
     /// 그 뒤에도 이 확률로 무작위 수를 둔다 (데이터 다양성용)
     pub epsilon: f64,
+    pub rules: Rules,
 }
 
 impl Default for Config {
     fn default() -> Self {
-        Config { time_ms: 30, max_depth: 40, max_plies: 150, random_plies: 4, epsilon: 0.0 }
+        Config { time_ms: 30, max_depth: 40, max_plies: 150, random_plies: 4, epsilon: 0.0, rules: Rules::Cycle }
     }
 }
 
@@ -91,6 +140,9 @@ pub struct Sample {
     pub tiles: u64,
     pub me: u64,
     pub opp: u64,
+    /// 순환 규칙: 지금 움직일 말 / 상대가 다음에 움직일 말 (자유 규칙이면 me / opp 와 같음)
+    pub mc: u64,
+    pub oc: u64,
     pub score: i32,
     /// 탐색이 고른 수 (무작위 수로 바꾸기 전). 정책 학습용
     pub mv: i32,
@@ -120,10 +172,9 @@ pub fn play(
     game_id: usize,
 ) -> Outcome {
     let mut opening = JavaRandom::new(opening_seed);
-    let mut tiles = bb::from_array(&START_BOARD);
-    let mut pieces = [bb::pieces(&SIDE0_START), bb::pieces(&SIDE1_START)];
+    let (mut tiles, mut pieces, mut cur) = cfg.rules.start();
     let mut counts = History::default();
-    *counts.entry(position_hash(tiles, pieces[0], pieces[1])).or_insert(0) += 1;
+    *counts.entry(turn_hash(tiles, pieces[0], pieces[1], cur[0], cur[1])).or_insert(0) += 1;
     let mut samples: Vec<Sample> = Vec::new();
     let mut buffer = vec![0i32; MAX_MOVES];
 
@@ -133,7 +184,8 @@ pub fn play(
         let side = ply & 1;
         let me = pieces[side];
         let opp = pieces[1 - side];
-        let (n, _) = bb::generate(tiles, me, opp, &mut buffer);
+        let (mc, oc) = (cur[side], cur[1 - side]);
+        let (n, _) = generate_turn(tiles, me, opp, mc, &mut buffer);
         if n > 0 {
             let mv;
             if ply < cfg.random_plies {
@@ -145,7 +197,7 @@ pub fn play(
                 engine.set_threads(players[side].search_threads);
                 engine.set_tunables(players[side].tune);
                 engine.set_game_history(counts.clone());
-                let result = engine.search(tiles, me, opp);
+                let result = engine.search_turn(tiles, me, opp, mc, oc);
                 let mut chosen = result.mv;
                 let immediate_win = bb::dest(chosen) == GOAL;
                 if record && !immediate_win {
@@ -153,10 +205,12 @@ pub fn play(
                         game: game_id,
                         ply,
                         side,
-                        features: engine.features(tiles, me, opp),
+                        features: engine.features_turn(tiles, me, opp, mc, oc),
                         tiles: tiles | me | opp,
                         me,
                         opp,
+                        mc,
+                        oc,
                         score: result.score,
                         mv: result.mv,
                         outcome: 0.0,
@@ -173,15 +227,18 @@ pub fn play(
             }
             tiles = bb::apply(tiles, mv);
             pieces[side] = bb::apply_pieces(me, mv);
+            cur[side] = next_turn_pieces(me, mc, pieces[side]);
             if bb::dest(mv) == GOAL {
                 winner = side as i32;
                 ply += 1;
                 break;
             }
+        } else {
+            cur[side] = next_turn_pieces(me, mc, me);
         }
         let next = 1 - side;
         let seen = {
-            let c = counts.entry(position_hash(tiles, pieces[next], pieces[side])).or_insert(0);
+            let c = counts.entry(turn_hash(tiles, pieces[next], pieces[side], cur[next], cur[side])).or_insert(0);
             *c += 1;
             *c
         };

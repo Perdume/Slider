@@ -1,4 +1,6 @@
 [
- {"key": "combo_150ms", "note": "lmp+cm+hm+fut 묶음 vs 게임 설정, 150ms", "a": ["--a", "{W}", "--opts-a", "lmr2,lmp,cm,hm,fut", "--tune-a", "game"], "b": ["--b", "{W}", "--opts-b", "lmr2", "--tune-b", "game"], "time_ms": 150, "max_games": 1000, "elo1": 15},
- {"key": "combo_30ms", "note": "lmp+cm+hm+fut 묶음 vs 게임 설정, 30ms", "a": ["--a", "{W}", "--opts-a", "lmr2,lmp,cm,hm,fut", "--tune-a", "game"], "b": ["--b", "{W}", "--opts-b", "lmr2", "--tune-b", "game"], "time_ms": 30, "max_games": 2000, "elo1": 15}
+ {"key": "cyc_tuned_vs_default_w", "note": "[순환] 튜닝 가중치 vs 기본 가중치, 30ms", "a": ["--a", "{W}", "--opts-a", "lmr2", "--tune-a", "game"], "b": ["--b", "default", "--opts-b", "lmr2", "--tune-b", "game"], "time_ms": 30, "max_games": 2000},
+ {"key": "cyc_game_vs_default_tune", "note": "[순환] SPSA 탐색 상수 vs 기본 상수, 30ms", "a": ["--a", "{W}", "--opts-a", "lmr2", "--tune-a", "game"], "b": ["--b", "{W}", "--opts-b", "lmr2", "--tune-b", "default"], "time_ms": 30, "max_games": 2000},
+ {"key": "cyc_lmr2_vs_none", "note": "[순환] lmr2 vs 탐색 개선 없음, 30ms", "a": ["--a", "{W}", "--opts-a", "lmr2", "--tune-a", "game"], "b": ["--b", "{W}", "--opts-b", "none", "--tune-b", "game"], "time_ms": 30, "max_games": 2000},
+ {"key": "cyc_trap0", "note": "[순환] 함정 보너스 끔(trap=0) vs 게임 설정, 30ms", "a": ["--a", "{W}", "--opts-a", "lmr2", "--tune-a", "game,trap=0"], "b": ["--b", "{W}", "--opts-b", "lmr2", "--tune-b", "game"], "time_ms": 30, "max_games": 2000}
 ]

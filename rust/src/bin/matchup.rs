@@ -3,7 +3,8 @@
 //!
 //! 사용법:
 //!   matchup --a weights.json --b default --games 100 --time-ms 50
-//! 옵션: --net-a --net-b 쪽별 신경망 파일 (없으면 선형 평가만)
+//! 옵션: --rules cycle|free (기본 cycle = 말 하나씩 시계 방향, free = 예전 규칙)
+//!       --net-a --net-b 쪽별 신경망 파일 (없으면 선형 평가만)
 //!       --opts-a --opts-b 쪽별 탐색 개선 선택지 (쉼표 목록: pvs,lmr,lmr2,nmp. 기본은 모두 끔)
 //!       --time-ms-a --time-ms-b 쪽별 수당 시간 (없으면 --time-ms)
 //!       --tune-a --tune-b 쪽별 탐색 상수 (예: margin=40,trap=60,plan_ply=5,lmr_depth=3,lmr_index=3,lmr2_depth=5,lmr2_index=6)
@@ -90,6 +91,7 @@ fn run() -> Result<(), String> {
         // 시작 국면을 다양하게 하려고 처음 몇 수는 무작위로 둔다 (한 쌍의 두 판은 같은 시작 국면)
         random_plies: cli::get(&opt, "random-plies", 6)?,
         max_plies: cli::get(&opt, "max-plies", 150)?,
+        rules: arena::Rules::parse(opt.get("rules").map(String::as_str).unwrap_or("cycle"))?,
         epsilon: 0.0,
     };
 

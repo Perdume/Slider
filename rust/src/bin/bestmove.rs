@@ -1,7 +1,8 @@
 //! 다른 프로그램(파이썬 강화학습 등)이 Rust 엔진의 수를 받아 가는 서버.
 //! 표준 입력으로 국면을 한 줄에 하나씩 받고, 빈 줄이 오면 그때까지 받은 국면들을 병렬로 탐색해서 같은 순서로 답한다.
 //!
-//!   입력 한 줄:  tiles me opp            (u64 비트보드 3개, me = 둘 차례인 쪽 말. tiles 에 말이 선 칸이 없어도 됨)
+//!   입력 한 줄:  tiles me opp [mc oc]   (u64 비트보드, me = 둘 차례인 쪽 말. tiles 에 말이 선 칸이 없어도 됨)
+//!                mc oc 를 주면 순환 규칙: mc = 지금 움직일 내 말, oc = 상대가 다음에 움직일 말 (없으면 예전 자유 규칙)
 //!   출력 한 줄:  move score depth        (move 는 엔진의 수 정수, 둘 수 없으면 -1 = 통과)
 //!
 //! 옵션: --time-ms 50 --weights 경로|default|tuned(기본) --search lmr2(기본)|lmr|none --tune game(기본)|default|이름=값,...
@@ -40,17 +41,18 @@ fn run() -> Result<(), String> {
         Some(other) => EvalWeights::from_argument(Some(other))?,
     };
     let stdin = io::stdin();
-    let mut batch: Vec<(u64, u64, u64)> = Vec::new();
+    let mut batch: Vec<(u64, u64, u64, u64, u64)> = Vec::new();
     let mut out = io::stdout();
     for line in stdin.lock().lines() {
         let line = line.map_err(|e| e.to_string())?;
         let t = line.trim();
         if !t.is_empty() {
             let v: Vec<u64> = t.split_whitespace().map(|x| x.parse::<u64>()).collect::<Result<_, _>>().map_err(|_| format!("읽을 수 없는 줄: {}", t))?;
-            if v.len() != 3 {
-                return Err(format!("tiles me opp 세 개가 필요합니다: {}", t));
+            match v.len() {
+                3 => batch.push((v[0], v[1], v[2], v[1], v[2])),
+                5 => batch.push((v[0], v[1], v[2], v[3], v[4])),
+                _ => return Err(format!("tiles me opp [mc oc] 가 필요합니다: {}", t)),
             }
-            batch.push((v[0], v[1], v[2]));
             continue;
         }
         // 빈 줄: 모아 둔 국면을 병렬로 탐색
@@ -63,11 +65,11 @@ fn run() -> Result<(), String> {
                     if i >= batch.len() {
                         break;
                     }
-                    let (tiles, me, opp) = batch[i];
+                    let (tiles, me, opp, mc, oc) = batch[i];
                     let mut ai = SliderAi::with_weights(time_ms, 40, &weights);
                     ai.set_options(opts);
                     ai.set_tunables(tune);
-                    let r = ai.search(tiles, me, opp);
+                    let r = ai.search_turn(tiles, me, opp, mc, oc);
                     results.lock().unwrap()[i] = (r.mv, r.score, r.depth);
                 });
             }

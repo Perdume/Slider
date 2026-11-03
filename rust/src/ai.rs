@@ -361,6 +361,11 @@ pub struct SliderAi {
     back_cost: [i32; 4],
     /// 지금 탐색 경로의 국면 해시 (반복 판정용)
     path: [u64; MAX_PLY + 1],
+    /// ply 마다: 둘 차례인 쪽이 지금 움직일 수 있는 말 / 상대가 다음 차례에 움직일 수 있는 말
+    /// (자유 규칙이면 각각 그쪽 말 전부, 순환 규칙이면 정해진 말 하나)
+    mcs: [u64; MAX_PLY + 2],
+    ocs: [u64; MAX_PLY + 2],
+    scratch2: Vec<i32>,
 
     /// 실제 게임에서 이미 나온 국면의 횟수 (position_hash 기준). 3번째 반복은 무승부다.
     game_history: History,
@@ -426,6 +431,44 @@ pub fn position_hash(tiles: u64, me: u64, opp: u64) -> u64 {
     crate::nnue::hash(tiles, me, opp)
 }
 
+/// 차례 정보까지 넣은 국면 해시. mc = 지금 움직일 수 있는 내 말, oc = 상대가 다음 차례에 움직일 수 있는 말.
+/// 말을 자유롭게 고르는 규칙(mc == me, oc == opp)이면 position_hash 와 같다.
+pub fn turn_hash(tiles: u64, me: u64, opp: u64, mc: u64, oc: u64) -> u64 {
+    let h = position_hash(tiles, me, opp);
+    if mc == me && oc == opp {
+        h
+    } else {
+        h ^ mix(mc.wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ oc.rotate_left(29))
+    }
+}
+
+/// 내가 수를 둔(또는 넘긴) 뒤, 내 다음 차례에 움직일 수 있는 말.
+/// 자유 규칙(mc == me)이면 내 말 전부, 순환 규칙(정해진 말 하나)이면 이번에 움직이지 않은 다른 말.
+#[inline(always)]
+pub fn next_turn_pieces(me_before: u64, mc: u64, me_after: u64) -> u64 {
+    if mc == me_before {
+        me_after
+    } else {
+        me_before & !mc
+    }
+}
+
+/// mc (내 말 중 지금 움직일 수 있는 말) 의 수만 만든다. 다른 내 말은 지나갈 수 없는 칸으로 친다.
+#[inline(always)]
+pub fn generate_turn(tiles: u64, me: u64, opp: u64, mc: u64, out: &mut [i32]) -> (usize, u64) {
+    bb::generate(tiles, mc, opp | (me & !mc), out)
+}
+
+/// TT 칸에 넣는 차례 정보 (자유 규칙이면 0)
+#[inline(always)]
+fn turn_code(me: u64, opp: u64, mc: u64, oc: u64) -> u64 {
+    if mc == me && oc == opp {
+        0
+    } else {
+        (mc.trailing_zeros() as u64 + 1) | (oc.trailing_zeros() as u64 + 1) << 8
+    }
+}
+
 #[inline(always)]
 fn mix(mut x: u64) -> u64 {
     x ^= x >> 30;
@@ -476,6 +519,9 @@ impl SliderAi {
             scratch: vec![0; MAX_MOVES],
             back_cost: [0; 4],
             path: [0; MAX_PLY + 1],
+            mcs: [0; MAX_PLY + 2],
+            ocs: [0; MAX_PLY + 2],
+            scratch2: vec![0; MAX_MOVES],
             game_history: History::default(),
             deadline: Instant::now(),
             nodes: 0,
@@ -500,6 +546,8 @@ impl SliderAi {
         a.game_history = self.game_history.clone();
         a.opt_ply = self.opt_ply;
         a.path[0] = self.path[0];
+        a.mcs[0] = self.mcs[0];
+        a.ocs[0] = self.ocs[0];
         a.helper_id = id;
         a.stop = Some(stop);
         a
@@ -541,11 +589,23 @@ impl SliderAi {
     /// me 가 둘 차례인 국면의 평가 특징 (weights::NAMES 순서). 학습 데이터를 만들 때 쓴다.
     /// me 가 바로 이길 수 있는 국면은 평가 대상이 아니므로 호출하는 쪽에서 걸러야 한다.
     pub fn features(&mut self, tiles: u64, me: u64, opp: u64) -> [i32; weights::COUNT] {
+        self.features_turn(tiles, me, opp, me, opp)
+    }
+
+    /// 순환 규칙용: mc = 지금 움직일 말, oc = 상대가 다음에 움직일 말
+    pub fn features_turn(&mut self, tiles: u64, me: u64, opp: u64, mc: u64, oc: u64) -> [i32; weights::COUNT] {
         let tiles = tiles | me | opp;
         let mut list = vec![0i32; MAX_MOVES];
-        let (n, reach) = bb::generate(tiles, me, opp, &mut list);
-        self.compute_features(tiles, me, opp, reach, &list, n);
+        let (n, reach) = generate_turn(tiles, me, opp, mc, &mut list);
+        self.compute_features(tiles, me, opp, mc, oc, reach, &list, n);
         self.feature
+    }
+
+    /// 자식 국면(ply + 1)의 차례 정보를 채운다. me_after = 수를 둔 뒤 내 말 (넘기면 me 그대로)
+    #[inline(always)]
+    fn set_child(&mut self, ply: usize, me: u64, me_after: u64) {
+        self.mcs[ply + 1] = self.ocs[ply];
+        self.ocs[ply + 1] = next_turn_pieces(me, self.mcs[ply], me_after);
     }
 
     /// me 차례에서 최선의 수를 찾는다. 둘 수 있는 수가 없으면 mv 는 -1 (차례를 넘긴다).
@@ -553,12 +613,20 @@ impl SliderAi {
     /// 2단계: 안전한 수들만 "상대는 직접적인 위협에만 반응한다"고 가정한 탐색으로 다시 비교해
     ///        여러 수에 걸친 공격 계획이 있는 수를 고른다.
     pub fn search(&mut self, tiles: u64, me: u64, opp: u64) -> SearchResult {
+        self.search_turn(tiles, me, opp, me, opp)
+    }
+
+    /// 차례 규칙을 지정한 탐색. mc = 지금 움직일 수 있는 내 말, oc = 상대가 다음 차례에 움직일 수 있는 말.
+    /// 자유 규칙이면 mc = me, oc = opp (= search). 순환 규칙이면 각각 정해진 말 하나.
+    pub fn search_turn(&mut self, tiles: u64, me: u64, opp: u64, mc: u64, oc: u64) -> SearchResult {
         let tiles = tiles | me | opp;
+        self.mcs[0] = mc;
+        self.ocs[0] = oc;
         let start = Instant::now();
         self.nodes = 0;
 
         let mut root = vec![0i32; MAX_MOVES];
-        let (n, _) = bb::generate(tiles, me, opp, &mut root);
+        let (n, _) = generate_turn(tiles, me, opp, mc, &mut root);
         if n == 0 {
             return SearchResult { mv: -1, score: 0, depth: 0, nodes: 0 };
         }
@@ -567,7 +635,7 @@ impl SliderAi {
                 return SearchResult { mv: root[i], score: WIN, depth: 1, nodes: 1 };
             }
         }
-        self.path[0] = position_hash(tiles, me, opp);
+        self.path[0] = turn_hash(tiles, me, opp, mc, oc);
         root.truncate(n);
         let mut scores = vec![0i32; n];
         self.opt_ply = NO_PLAN;
@@ -653,6 +721,7 @@ impl SliderAi {
                 // 최선수와 MARGIN 이내인 수는 정확한 점수를 얻도록 창을 넓힌다
                 let floor = if best == -INF { -INF } else { best - self.tune.margin };
                 self.cur_move[0] = m;
+                self.set_child(0, me, bb::apply_pieces(me, m));
                 work_scores[i] =
                     -self.negamax(bb::apply(tiles, m), opp, bb::apply_pieces(me, m), depth - 1, -INF, -floor, 1);
                 best = best.max(work_scores[i]);
@@ -699,11 +768,12 @@ impl SliderAi {
             let m = root_moves[i];
             let after = bb::apply(tiles, m);
             let my_after = bb::apply_pieces(me, m);
-            let (n, _) = bb::generate(after, opp, my_after, &mut replies);
+            let (oc, nc) = (self.ocs[0], next_turn_pieces(me, self.mcs[0], my_after));
+            let (n, _) = generate_turn(after, opp, my_after, oc, &mut replies);
             let mut traps = 0;
             for j in 0..n {
                 let r = replies[j];
-                if self.can_win(bb::apply(after, r), my_after, bb::apply_pieces(opp, r)) {
+                if self.can_win(bb::apply(after, r), my_after, bb::apply_pieces(opp, r), nc) {
                     traps += 1;
                 }
             }
@@ -732,10 +802,11 @@ impl SliderAi {
         if self.aborted {
             return 0;
         }
-        let threatened = self.can_win(tiles, opp, me);
+        let (mc, oc) = (self.mcs[ply], self.ocs[ply]);
+        let threatened = self.can_win(tiles, opp, me, oc);
         if !threatened {
             // 조용한 국면: 평가로 멈출 수 있다 (stand pat)
-            let stand = self.evaluate(tiles, me, opp, reach_me, list, n);
+            let stand = self.evaluate(tiles, me, opp, mc, oc, reach_me, list, n);
             if stand >= beta || !self.opts.qs2 || qply >= QS_MAX || ply >= MAX_PLY - 3 {
                 return stand;
             }
@@ -745,7 +816,8 @@ impl SliderAi {
             for i in 0..n {
                 let m = list[i];
                 let (nt, np) = (bb::apply(tiles, m), bb::apply_pieces(me, m));
-                if !self.can_win(nt, np, opp) || self.can_win(nt, opp, np) {
+                self.set_child(ply, me, np);
+                if !self.can_win(nt, np, opp, self.ocs[ply + 1]) || self.can_win(nt, opp, np, self.mcs[ply + 1]) {
                     continue;
                 }
                 let v = -self.qsearch_child(nt, opp, np, -beta, -alpha, ply + 1, qply + 1);
@@ -769,14 +841,15 @@ impl SliderAi {
             return -(WIN - (ply as i32 + 1));
         }
         if qply >= QS_MAX || ply >= MAX_PLY - 3 {
-            return self.evaluate(tiles, me, opp, reach_me, list, n);
+            return self.evaluate(tiles, me, opp, mc, oc, reach_me, list, n);
         }
         // 위협을 받는 중: 막는 수만 둬 본다 (막는 수가 없으면 진다)
         let mut best = -(WIN - (ply as i32 + 1));
         for i in 0..n {
             let m = list[i];
             let (nt, np) = (bb::apply(tiles, m), bb::apply_pieces(me, m));
-            if self.can_win(nt, opp, np) {
+            self.set_child(ply, me, np);
+            if self.can_win(nt, opp, np, self.mcs[ply + 1]) {
                 continue;
             }
             let v = -self.qsearch_child(nt, opp, np, -beta, -alpha, ply + 1, qply + 1);
@@ -799,7 +872,7 @@ impl SliderAi {
     /// 위협 정리 탐색의 다음 국면 (me 차례, me 는 바로 이길 수 없다고 이미 확인함).
     fn qsearch_child(&mut self, tiles: u64, me: u64, opp: u64, alpha: i32, beta: i32, ply: usize, qply: i32) -> i32 {
         let mut list = std::mem::take(&mut self.moves[ply]);
-        let (n, reach_me) = bb::generate(tiles, me, opp, &mut list);
+        let (n, reach_me) = generate_turn(tiles, me, opp, self.mcs[ply], &mut list);
         let v = if list[..n].iter().any(|&m| bb::dest(m) == GOAL) {
             WIN - ply as i32
         } else {
@@ -809,8 +882,9 @@ impl SliderAi {
         v
     }
 
-    fn can_win(&mut self, tiles: u64, me: u64, opp: u64) -> bool {
-        let (n, _) = bb::generate(tiles, me, opp, &mut self.scratch);
+    /// me 의 mc 말이 지금 바로 골에 멈출 수 있는가
+    fn can_win(&mut self, tiles: u64, me: u64, opp: u64, mc: u64) -> bool {
+        let (n, _) = generate_turn(tiles, me, opp, mc, &mut self.scratch);
         self.scratch[..n].iter().any(|&m| bb::dest(m) == GOAL)
     }
 
@@ -828,7 +902,8 @@ impl SliderAi {
 
         // 반복 국면은 무승부다. 같은 차례의 국면은 2 ply 간격으로만 다시 나올 수 있다.
         // 탐색 경로에서 한 번이라도 반복되면 순환으로 보고, 실제 게임에서 이미 2번 나온 국면이면 3번째라서 무승부다.
-        let hash = position_hash(tiles, me, opp);
+        let hash = turn_hash(tiles, me, opp, self.mcs[ply], self.ocs[ply]);
+        let tcode = turn_code(me, opp, self.mcs[ply], self.ocs[ply]);
         self.path[ply] = hash;
         let mut i = ply as isize - 2;
         while i >= 0 {
@@ -853,7 +928,7 @@ impl SliderAi {
         let idx = (mix(hash.wrapping_add(mode as u64)) as usize) & (TT_SIZE - 1);
         let mut tt_best = -1;
         let entry = self.tt.load(idx);
-        if entry[1] == me && entry[2] == opp && entry[0] == tiles && ((entry[4] >> 16) & 0xff) as i32 == mode {
+        if entry[1] == me && entry[2] == opp && entry[0] == tiles && ((entry[4] >> 16) & 0xff) as i32 == mode && (entry[4] >> 24) == tcode {
             tt_best = (entry[3] >> 32) as u32 as i32;
             if (entry[4] & 0xff) as u8 as i8 as i32 >= depth {
                 let s = from_tt(entry[3] as u32 as i32, ply as i32);
@@ -867,7 +942,7 @@ impl SliderAi {
         // 재귀 호출 동안 self 를 빌려줘야 해서 이 층의 버퍼는 잠시 꺼내 쓰고 돌려놓는다
         let mut list = std::mem::take(&mut self.moves[ply]);
         let mut key = std::mem::take(&mut self.keys[ply]);
-        let result = self.expand(tiles, me, opp, depth, alpha, beta, ply, optimistic, mode, idx, tt_best, &mut list, &mut key);
+        let result = self.expand(tiles, me, opp, depth, alpha, beta, ply, optimistic, mode | (tcode << 8) as i32, idx, tt_best, &mut list, &mut key);
         self.moves[ply] = list;
         self.keys[ply] = key;
         result
@@ -890,7 +965,8 @@ impl SliderAi {
         list: &mut [i32],
         key: &mut [i32],
     ) -> i32 {
-        let (n, reach_me) = bb::generate(tiles, me, opp, list);
+        let (mc, oc) = (self.mcs[ply], self.ocs[ply]);
+        let (n, reach_me) = generate_turn(tiles, me, opp, mc, list);
         for i in 0..n {
             if bb::dest(list[i]) == GOAL {
                 return (if optimistic { PLAN_WIN } else { WIN }) - ply as i32;
@@ -901,7 +977,7 @@ impl SliderAi {
         let need_threat = !optimistic
             && ply < MAX_PLY - 1
             && (self.opts.ext || (self.opts.lmp && depth >= 1 && depth <= t.lmp_depth) || (self.opts.fut && depth >= 1 && depth <= t.fut_depth));
-        let threatened = need_threat && self.can_win(tiles, opp, me);
+        let threatened = need_threat && self.can_win(tiles, opp, me, oc);
         let mut depth = depth;
         if self.opts.ext && threatened && ply < MAX_PLY - 8 {
             depth += 1;
@@ -910,24 +986,27 @@ impl SliderAi {
             if self.opts.qs && !optimistic && ply < MAX_PLY - 2 {
                 return self.qsearch_known(tiles, me, opp, alpha, beta, ply, 0, reach_me, list, n);
             }
-            return self.evaluate(tiles, me, opp, reach_me, list, n);
+            return self.evaluate(tiles, me, opp, mc, oc, reach_me, list, n);
         }
-        if optimistic && (ply & 1) == 1 && !self.can_win(tiles, opp, me) {
+        if optimistic && (ply & 1) == 1 && !self.can_win(tiles, opp, me, oc) {
             // 깊은 곳에서 상대는 바로 이기거나 직접적인 위협을 막을 때만 움직인다고 가정한다.
             // 이렇게 해야 AI 가 여러 수에 걸친 공격 계획을 세운다.
             self.cur_move[ply] = -1;
+            self.set_child(ply, me, me);
             return -self.negamax(tiles, opp, me, depth - 1, -beta, -alpha, ply + 1);
         }
         if n == 0 {
             // 둘 수 있는 수가 없으면 차례를 넘긴다
             self.cur_move[ply] = -1;
+            self.set_child(ply, me, me);
             return -self.negamax(tiles, opp, me, depth - 1, -beta, -alpha, ply + 1);
         }
 
         // 널무브: 차례를 그냥 넘겨도 beta 이상이면 실제 수는 더 좋을 것으로 보고 자른다.
         // 상대가 바로 이길 수 있는 국면(넘기면 진다)과 승패 점수 근처에서는 쓰지 않는다.
-        if self.opts.nmp && !optimistic && depth >= 3 && beta.abs() < WIN_BOUND && !self.can_win(tiles, opp, me) {
+        if self.opts.nmp && !optimistic && depth >= 3 && beta.abs() < WIN_BOUND && !self.can_win(tiles, opp, me, oc) {
             self.cur_move[ply] = -1;
+            self.set_child(ply, me, me);
             let v = -self.negamax(tiles, opp, me, depth - 1 - 2, -beta, -beta + 1, ply + 1);
             if self.aborted {
                 return 0;
@@ -962,7 +1041,7 @@ impl SliderAi {
             && !threatened
             && depth <= t.fut_depth
             && alpha.abs() < WIN_BOUND
-            && self.evaluate(tiles, me, opp, reach_me, list, n) + t.fut_margin * depth <= alpha;
+            && self.evaluate(tiles, me, opp, mc, oc, reach_me, list, n) + t.fut_margin * depth <= alpha;
         let lmp = self.opts.lmp && !optimistic && !threatened && depth <= t.lmp_depth;
 
         let orig_alpha = alpha;
@@ -977,7 +1056,8 @@ impl SliderAi {
                 break;
             }
             let (nt, np) = (bb::apply(tiles, m), bb::apply_pieces(me, m));
-            if futile && late_quiet && !self.can_win(nt, np, opp) {
+            self.set_child(ply, me, np);
+            if futile && late_quiet && !self.can_win(nt, np, opp, self.ocs[ply + 1]) {
                 continue;
             }
             self.cur_move[ply] = m;
@@ -1038,7 +1118,7 @@ impl SliderAi {
                 me,
                 opp,
                 to_tt(best, ply as i32) as u32 as u64 | (best_move as u32 as u64) << 32,
-                (depth as i8 as u8 as u64) | (flag as u64) << 8 | (mode as u8 as u64) << 16,
+                (depth as i8 as u8 as u64) | (flag as u64) << 8 | (mode as u8 as u64) << 16 | ((mode as u64 >> 8) & 0xffff) << 24,
             ],
         );
         best
@@ -1071,8 +1151,9 @@ impl SliderAi {
     }
 
     /// 말단 평가. me 가 둘 차례이고, me 가 바로 이길 수 없는 상태라고 가정한다.
-    fn evaluate(&mut self, tiles: u64, me: u64, opp: u64, reach_me: u64, list_me: &[i32], moves_me: usize) -> i32 {
-        self.compute_features(tiles, me, opp, reach_me, list_me, moves_me);
+    #[allow(clippy::too_many_arguments)]
+    fn evaluate(&mut self, tiles: u64, me: u64, opp: u64, mc: u64, oc: u64, reach_me: u64, list_me: &[i32], moves_me: usize) -> i32 {
+        self.compute_features(tiles, me, opp, mc, oc, reach_me, list_me, moves_me);
         let mut score = 0;
         for i in 0..weights::COUNT {
             score += self.weights[i] * self.feature[i];
@@ -1084,9 +1165,22 @@ impl SliderAi {
     }
 
     /// 평가 특징을 feature 배열에 채운다 (정의는 weights.rs 참고). scratch 를 덮어쓴다.
-    fn compute_features(&mut self, tiles: u64, me: u64, opp: u64, reach_me: u64, list_me: &[i32], moves_me: usize) {
-        let (moves_opp, reach_opp) = bb::generate(tiles, opp, me, &mut self.scratch);
+    /// 순환 규칙(mc != me)에서는 위협은 상대가 다음에 움직일 말(oc)로만 세고,
+    /// 이동 수 / 걸어갈 수 있는 칸 / 계획은 양쪽 말 전부로 센다 (두 번째 말도 곧 움직이므로).
+    #[allow(clippy::too_many_arguments)]
+    fn compute_features(&mut self, tiles: u64, me: u64, opp: u64, mc: u64, oc: u64, reach_me: u64, list_me: &[i32], moves_me: usize) {
+        let (mut moves_opp, mut reach_opp) = generate_turn(tiles, opp, me, oc, &mut self.scratch);
         let threats_opp = self.scratch[..moves_opp].iter().filter(|&&m| bb::dest(m) == GOAL).count() as i32;
+        if oc != opp {
+            (moves_opp, reach_opp) = bb::generate(tiles, opp, me, &mut self.scratch);
+        }
+        let mut list_full = std::mem::take(&mut self.scratch2);
+        let (list_me, moves_me, reach_me) = if mc != me {
+            let (n, r) = bb::generate(tiles, me, opp, &mut list_full);
+            (&list_full[..], n, r)
+        } else {
+            (list_me, moves_me, reach_me)
+        };
 
         self.feature = [0; weights::COUNT];
         if threats_opp == 1 {
@@ -1107,6 +1201,7 @@ impl SliderAi {
         };
         self.feature[weights::POSITION] = position_score(me, table) - position_score(opp, table);
         self.feature[weights::TEMPO] = 1;
+        self.scratch2 = list_full;
     }
 }
 

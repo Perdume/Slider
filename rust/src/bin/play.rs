@@ -1,11 +1,14 @@
-//! 콘솔에서 사람과 AI 가 두는 Slider (Java `Game` 과 같은 규칙과 조작).
+//! 콘솔에서 사람과 AI 가 두는 Slider.
 //!
 //!   cargo run --release --bin play
+//! 규칙 (기본 --rules cycle): 대각선 배치 (왼쪽 위 AI, 오른쪽 위 나, 왼쪽 아래 나, 오른쪽 아래 AI).
+//!   차례는 나부터 시계 방향으로 말 하나씩: 오른쪽 위(나 1) -> 오른쪽 아래(AI X) -> 왼쪽 아래(나 2) -> 왼쪽 위(AI Y) -> ...
+//!   --rules free 는 예전 규칙 (위쪽 두 귀퉁이 나, 아래쪽 AI, 차례마다 말 아무거나).
 //! 옵션: --time-ms 1500 (AI 수당 시간) --threads N (AI 가 한 수에 쓰는 스레드, 기본 코어 수)
 //!       --search lmr2|lmr|none (탐색 개선, 기본 lmr2) --tune game|default|이름=값,... (탐색 상수, 기본 game = SPSA 로 맞춘 값)
 //!       --weights 경로|default|tuned (기본 tuned) --net 신경망 파일
 //!
-//! 조작: 움직일 말 1 또는 2 를 고른 뒤 w(위) a(왼쪽) s(아래) d(오른쪽).
+//! 조작: (free 규칙이면 움직일 말 1 또는 2 를 고른 뒤) w(위) a(왼쪽) s(아래) d(오른쪽).
 //!   옆 칸이 타일이면 걸어가고 턴이 계속된다. 옆 칸이 빈 칸이면 서 있는 타일째 미끄러지고 턴이 끝난다.
 //!   r = 이번 턴을 말 고르기부터 다시. q = 끝내기.
 //! 어느 말이든 골(G, 가운데)에 멈추면 이긴다. 둘 수 있는 수가 없으면 차례가 넘어가고, 같은 국면이 3번 나오면 무승부다.
@@ -15,8 +18,8 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::Instant;
 
-use slider::ai::{position_hash, History, SearchOptions, SliderAi, Tunables, WIN_BOUND};
-use slider::arena::{SIDE0_START, SIDE1_START, START_BOARD};
+use slider::ai::{turn_hash, History, SearchOptions, SliderAi, Tunables, WIN_BOUND};
+use slider::arena::{Rules, CYCLE_SIDE0_START, CYCLE_SIDE1_START, SIDE0_START, SIDE1_START, START_BOARD};
 use slider::bitboard::{self as bb, GOAL, SIZE};
 use slider::cli;
 use slider::nnue::Network;
@@ -33,11 +36,29 @@ struct State {
     tiles: u64,
     player: [usize; 2],
     ai: [usize; 2],
+    /// 순환 규칙에서 다음에 움직일 말 번호 (플레이어, AI). 자유 규칙이면 None
+    turn: Option<[usize; 2]>,
 }
 
 impl State {
     fn mask(cells: &[usize; 2]) -> u64 {
         (1u64 << cells[0]) | (1u64 << cells[1])
+    }
+
+    /// (플레이어 말 중 다음에 움직일 수 있는 말, AI 말 중 다음에 움직일 수 있는 말)
+    fn movers(&self) -> (u64, u64) {
+        match self.turn {
+            Some([p, a]) => (1u64 << self.player[p], 1u64 << self.ai[a]),
+            None => (State::mask(&self.player), State::mask(&self.ai)),
+        }
+    }
+
+    /// 순환 규칙: 방금 둔(또는 넘긴) 쪽의 다음 말로 넘긴다
+    fn advance(&mut self, player_moved: bool) {
+        if let Some(t) = self.turn.as_mut() {
+            let i = if player_moved { 0 } else { 1 };
+            t[i] ^= 1;
+        }
     }
 
     fn print(&self) {
@@ -69,6 +90,9 @@ impl State {
             loc(self.ai[0]),
             loc(self.ai[1])
         ));
+        if let Some([p, a]) = self.turn {
+            out.push_str(&format!("\n다음 순서: 나 {} -> AI {}", PLAYER_MARK[p], AI_MARK[a]));
+        }
         println!("{}", out);
     }
 
@@ -140,8 +164,13 @@ fn run() -> Result<(), String> {
     };
     println!("AI: 수당 {}ms, 스레드 {}, 탐색 {}{}{}", time_ms, threads, opts, if tune == Tunables::game() { " + 튜닝 상수" } else { "" }, if net.is_some() { ", 신경망" } else { "" });
 
+    let rules = Rules::parse(opt.get("rules").map(String::as_str).unwrap_or("cycle"))?;
     let start = |locs: &[(usize, usize); 2]| [locs[0].0 * SIZE + locs[0].1, locs[1].0 * SIZE + locs[1].1];
-    let mut st = State { tiles: bb::from_array(&START_BOARD), player: start(&SIDE0_START), ai: start(&SIDE1_START) };
+    let mut st = match rules {
+        Rules::Cycle => State { tiles: bb::from_array(&START_BOARD), player: start(&CYCLE_SIDE0_START), ai: start(&CYCLE_SIDE1_START), turn: Some([0, 0]) },
+        Rules::Free => State { tiles: bb::from_array(&START_BOARD), player: start(&SIDE0_START), ai: start(&SIDE1_START), turn: None },
+    };
+    println!("규칙: {}", if rules == Rules::Cycle { "말 하나씩 시계 방향 (나 1 -> AI X -> 나 2 -> AI Y)" } else { "예전 규칙 (말 아무거나)" });
     let mut history = History::default();
     let mut player_to_move = true;
     record(&mut history, &st, player_to_move);
@@ -162,6 +191,7 @@ fn run() -> Result<(), String> {
             }
             _ => {}
         }
+        st.advance(player_to_move);
         player_to_move = !player_to_move;
         if record(&mut history, &st, player_to_move) >= 3 {
             st.print();
@@ -181,20 +211,21 @@ enum Outcome {
 /// 이 국면을 기록하고 지금까지 나온 횟수(이번 포함)를 돌려준다. 키는 둘 차례인 쪽 기준 position_hash.
 fn record(history: &mut History, st: &State, player_to_move: bool) -> u32 {
     let (p, a) = (State::mask(&st.player), State::mask(&st.ai));
-    let key = if player_to_move { position_hash(st.tiles, p, a) } else { position_hash(st.tiles, a, p) };
+    let (pc, ac) = st.movers();
+    let key = if player_to_move { turn_hash(st.tiles, p, a, pc, ac) } else { turn_hash(st.tiles, a, p, ac, pc) };
     let c = history.entry(key).or_insert(0);
     *c += 1;
     *c
 }
 
-/// 각 말이 이번 턴에 둘 수 있는 수가 있는지
-fn movable(st: &State, mine: [usize; 2], theirs: [usize; 2]) -> [bool; 2] {
+/// 각 말이 이번 턴에 둘 수 있는 수가 있는지 (순환 규칙이면 차례가 아닌 말은 false)
+fn movable(st: &State, mine: [usize; 2], theirs: [usize; 2], turn: Option<usize>) -> [bool; 2] {
     let mut buf = vec![0i32; bb::MAX_MOVES];
     let (n, _) = bb::generate(st.tiles, State::mask(&mine), State::mask(&theirs), &mut buf);
     let mut out = [false; 2];
     for &m in &buf[..n] {
         for i in 0..2 {
-            if bb::src(m) == mine[i] {
+            if bb::src(m) == mine[i] && turn.map_or(true, |t| t == i) {
                 out[i] = true;
             }
         }
@@ -208,14 +239,21 @@ fn read_line(lines: &mut impl Iterator<Item = io::Result<String>>) -> Option<Str
 }
 
 fn player_turn(st: &mut State, lines: &mut impl Iterator<Item = io::Result<String>>) -> Result<Outcome, String> {
-    let can = movable(st, st.player, st.ai);
+    let fixed = st.turn.map(|t| t[0]);
+    let can = movable(st, st.player, st.ai, fixed);
     if !can[0] && !can[1] {
-        println!("플레이어는 둘 수 있는 수가 없어 차례를 넘깁니다.");
+        match fixed {
+            Some(i) => println!("플레이어 말 {} 은 움직일 수 없어 차례를 넘깁니다.", PLAYER_MARK[i]),
+            None => println!("플레이어는 둘 수 있는 수가 없어 차례를 넘깁니다."),
+        }
         return Ok(Outcome::Passed);
     }
     loop {
         st.print();
-        let idx = loop {
+        let idx = if let Some(i) = fixed {
+            print!("말 {} 차례 (w/a/s/d): ", PLAYER_MARK[i]);
+            i
+        } else { loop {
             print!("움직일 말 (1/2): ");
             let Some(l) = read_line(lines) else { return Ok(Outcome::Quit) };
             match l.as_str() {
@@ -229,7 +267,7 @@ fn player_turn(st: &mut State, lines: &mut impl Iterator<Item = io::Result<Strin
                 }
                 _ => println!("1 또는 2를 입력하세요."),
             }
-        };
+        } };
         let saved = (st.tiles, st.player);
         loop {
             let Some(l) = read_line(lines) else { return Ok(Outcome::Quit) };
@@ -269,7 +307,8 @@ fn ai_turn(
     net: &Option<Arc<Network>>,
 ) -> Outcome {
     let (me, opp) = (State::mask(&st.ai), State::mask(&st.player));
-    let can = movable(st, st.ai, st.player);
+    let (oc, mc) = st.movers();
+    let can = movable(st, st.ai, st.player, st.turn.map(|t| t[1]));
     if !can[0] && !can[1] {
         println!("AI는 둘 수 있는 수가 없어 차례를 넘깁니다.");
         return Outcome::Passed;
@@ -281,7 +320,7 @@ fn ai_turn(
     ai.set_net(net.clone());
     ai.set_game_history(history.clone());
     let t0 = Instant::now();
-    let r = ai.search(st.tiles, me, opp);
+    let r = ai.search_turn(st.tiles, me, opp, mc, oc);
     let symbols = bb::to_symbols(st.tiles, me, opp, r.mv);
     let idx = if st.ai[0] == bb::src(r.mv) { 0 } else { 1 };
     let win_rate = if r.score >= WIN_BOUND {

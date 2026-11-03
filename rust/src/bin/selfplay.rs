@@ -5,7 +5,8 @@
 //!
 //! 사용법:
 //!   selfplay --games 200 --time-ms 30 --out data/selfplay.jsonl
-//! 옵션: --opts 탐색 개선 선택지 (pvs,lmr,nmp)
+//! 옵션: --rules cycle|free (기본 cycle = 말 하나씩 시계 방향, free = 예전 규칙)
+//!       --opts 탐색 개선 선택지 (pvs,lmr,nmp)
 //!       --games --time-ms --depth --random-plies --epsilon --max-plies --threads --seed --weights --out
 //!       --net 신경망 파일 (있으면 평가에 더한다)
 //!       --stop-file 경로 / --parent-pid N  멈춤 신호 (cli::Stop 참고)
@@ -54,6 +55,7 @@ fn run() -> Result<(), String> {
         random_plies: cli::get(&opt, "random-plies", 4)?,
         epsilon: cli::get(&opt, "epsilon", 0.05)?,
         max_plies: cli::get(&opt, "max-plies", 150)?,
+        rules: arena::Rules::parse(opt.get("rules").map(String::as_str).unwrap_or("cycle"))?,
     };
 
     if let Some(parent) = Path::new(&out).parent() {
@@ -129,7 +131,7 @@ fn run() -> Result<(), String> {
 fn to_json(s: &Sample, with_positions: bool) -> String {
     let features: Vec<String> = s.features.iter().map(|f| f.to_string()).collect();
     let position = if with_positions {
-        format!(",\"tiles\":{},\"me\":{},\"opp\":{},\"move\":{}", s.tiles, s.me, s.opp, s.mv)
+        format!(",\"tiles\":{},\"me\":{},\"opp\":{},\"mc\":{},\"oc\":{},\"move\":{}", s.tiles, s.me, s.opp, s.mc, s.oc, s.mv)
     } else {
         String::new()
     };
