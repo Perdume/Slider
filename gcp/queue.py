@@ -2,7 +2,7 @@
 
 queue.json 항목: {"key": 이름, "note": 설명, "a": [A쪽 matchup 인자], "b": [B쪽 인자],
                   "time_ms": 30, "max_games": 2000, "search_threads": 1}
-인자 안의 "{W}" 는 기준 가중치 파일 경로로 바뀐다.
+인자 안의 "{W}" 는 기준 가중치 파일 경로로, "{REPO}" 는 레포 경로로 바뀐다.
 결과: ~/slider_queue/state.json (대국마다 저장), ~/slider_queue/summary.txt
 """
 import json
@@ -34,7 +34,7 @@ def main():
             log(f"[{key}] 이미 끝남")
             continue
         st = int(q.get("search_threads", 1))
-        args = [str(a).replace("{W}", W) for a in q["a"] + q["b"]]
+        args = [str(a).replace("{W}", W).replace("{REPO}", str(REPO)) for a in q["a"] + q["b"]]
         cmd = [str(matchup), *args, "--games", str(q.get("max_games", 2000)), "--time-ms", str(q.get("time_ms", 30)),
                "--max-plies", "1000", "--sprt-elo0", "0", "--sprt-elo1", str(q.get("elo1", 25)),
                "--threads", str(max(1, THREADS // st)), "--seed", "1001"]

@@ -1,6 +1,4 @@
 [
- {"key": "nt700_300", "note": "[순환] nt 700/-300 vs 게임(450/-300)", "a": ["--a", "{W}", "--opts-a", "lmr2,hm", "--tune-a", "game,nt_me=700,nt_opp=-300"], "b": ["--b", "{W}", "--opts-b", "lmr2,hm", "--tune-b", "game"], "time_ms": 30, "max_games": 2000},
- {"key": "nt450_500", "note": "[순환] nt 450/-500 vs 게임(450/-300)", "a": ["--a", "{W}", "--opts-a", "lmr2,hm", "--tune-a", "game,nt_me=450,nt_opp=-500"], "b": ["--b", "{W}", "--opts-b", "lmr2,hm", "--tune-b", "game"], "time_ms": 30, "max_games": 2000},
- {"key": "nt1000_400", "note": "[순환] nt 1000/-400 vs 게임(450/-300)", "a": ["--a", "{W}", "--opts-a", "lmr2,hm", "--tune-a", "game,nt_me=1000,nt_opp=-400"], "b": ["--b", "{W}", "--opts-b", "lmr2,hm", "--tune-b", "game"], "time_ms": 30, "max_games": 2000},
- {"key": "nt450_300_150ms", "note": "[순환] 게임(450/-300) vs 예전(300/-300), 150ms", "a": ["--a", "{W}", "--opts-a", "lmr2,hm", "--tune-a", "game"], "b": ["--b", "{W}", "--opts-b", "lmr2,hm", "--tune-b", "game,nt_me=300,nt_opp=-300"], "time_ms": 150, "max_games": 800}
+ {"key": "total_150ms", "note": "[순환] 지금 게임 설정 vs 오늘 오후 설정(예전 규칙 값), 150ms", "a": ["--a", "{W}", "--opts-a", "lmr2,hm", "--tune-a", "game"], "b": ["--b", "{REPO}/weights/tuned_free.json", "--opts-b", "lmr2", "--tune-b", "game_free"], "time_ms": 150, "max_games": 400},
+ {"key": "total_500ms_4t", "note": "[순환] 지금 게임 설정 vs 오늘 오후 설정, 500ms x 4스레드", "a": ["--a", "{W}", "--opts-a", "lmr2,hm", "--tune-a", "game", "--search-threads-a", "4"], "b": ["--b", "{REPO}/weights/tuned_free.json", "--opts-b", "lmr2", "--tune-b", "game_free", "--search-threads-b", "4"], "time_ms": 500, "max_games": 160, "search_threads": 4}
 ]
