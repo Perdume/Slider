@@ -301,6 +301,10 @@ impl Tunables {
                 t = Tunables::game();
                 continue;
             }
+            if part == "default" {
+                t = Tunables::default();
+                continue;
+            }
             let (k, v) = part.split_once('=').ok_or_else(|| format!("이름=값 형식이 아닙니다: {}", part))?;
             let v: i32 = v.trim().parse().map_err(|_| format!("숫자가 아닙니다: {}", part))?;
             match k.trim() {

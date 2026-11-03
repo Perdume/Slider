@@ -39,8 +39,13 @@ def main():
                "--max-plies", "1000", "--sprt-elo0", "0", "--sprt-elo1", str(q.get("elo1", 25)),
                "--threads", str(max(1, THREADS // st)), "--seed", "1001"]
         log("$", " ".join(cmd))
-        out = subprocess.run(cmd, capture_output=True, text=True, check=True).stdout
-        r = json.loads([l for l in out.splitlines() if l.startswith("RESULT ")][-1][len("RESULT "):])
+        p = subprocess.run(cmd, capture_output=True, text=True)
+        res = [l for l in p.stdout.splitlines() if l.startswith("RESULT ")]
+        if p.returncode != 0 or not res:
+            # 실패한 실험은 건너뛰고 다음으로 (다시 돌리면 또 시도한다)
+            log(f"[{key}] 실패 (종료 코드 {p.returncode}): {(p.stderr or p.stdout)[-300:]}")
+            continue
+        r = json.loads(res[-1][len("RESULT "):])
         r["note"] = q.get("note", "")
         state[key] = r
         STATE.write_text(json.dumps(state, ensure_ascii=False, indent=1))
