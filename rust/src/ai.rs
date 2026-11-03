@@ -78,6 +78,19 @@ const POSITION: [i32; CELLS] = [
     0, 1, 2, 3, 2, 1, 0,
 ];
 
+/// 골이 있는 줄(가운데 행/열) 위의 칸만 높은 위치 점수. 이 게임은 골과 같은 줄에서 미끄러져야 골에 멈출 수 있어서,
+/// 가운데와의 거리보다 "골의 줄 위에 있는가" 가 더 의미 있을 수 있다 (pos_table = 1 로 시험)
+const POSITION_LINE: [i32; CELLS] = [
+    0, 0, 0, 4, 0, 0, 0, //
+    0, 0, 0, 4, 0, 0, 0, //
+    0, 0, 0, 4, 0, 0, 0, //
+    4, 4, 4, 0, 4, 4, 4, //
+    0, 0, 0, 4, 0, 0, 0, //
+    0, 0, 0, 4, 0, 0, 0, //
+    0, 0, 0, 4, 0, 0, 0,
+];
+const POSITION_NONE: [i32; CELLS] = [0; CELLS];
+
 const FULL: u64 = (1u64 << CELLS) - 1;
 const GOAL_BIT: u64 = 1u64 << GOAL;
 
@@ -220,11 +233,13 @@ pub struct Tunables {
     /// -dyn_threshold 보다 나쁘면(지는 중) 그만큼 좋게 본다. 0 이면 끔
     pub dyn_contempt: i32,
     pub dyn_threshold: i32,
+    /// 평가의 위치 점수 표: 0 = 가운데와 가까울수록 (예전), 1 = 골의 줄 위에 있는지, 2 = 없음
+    pub pos_table: i32,
 }
 
 impl Default for Tunables {
     fn default() -> Self {
-        Tunables { margin: MARGIN, trap: TRAP_WEIGHT, plan_ply: PLAN_PLY, lmr_depth: 3, lmr_index: 3, lmr2_depth: 5, lmr2_index: 6, contempt: 0, dyn_contempt: 0, dyn_threshold: 100 }
+        Tunables { margin: MARGIN, trap: TRAP_WEIGHT, plan_ply: PLAN_PLY, lmr_depth: 3, lmr_index: 3, lmr2_depth: 5, lmr2_index: 6, contempt: 0, dyn_contempt: 0, dyn_threshold: 100, pos_table: 0 }
     }
 }
 
@@ -255,6 +270,7 @@ impl Tunables {
                 "contempt" => t.contempt = v,
                 "dyn_contempt" => t.dyn_contempt = v,
                 "dyn_threshold" => t.dyn_threshold = v.max(0),
+                "pos_table" => t.pos_table = v.clamp(0, 2),
                 other => return Err(format!("알 수 없는 탐색 상수: {}", other)),
             }
         }
@@ -872,16 +888,21 @@ impl SliderAi {
         backstop_costs(tiles, &mut self.back_cost);
         count_plans(tiles, reach_me, &list_me[..moves_me], &self.back_cost, 1, &mut self.feature);
         count_plans(tiles, reach_opp, &self.scratch[..moves_opp], &self.back_cost, -1, &mut self.feature);
-        self.feature[weights::POSITION] = position_score(me) - position_score(opp);
+        let table = match self.tune.pos_table {
+            1 => &POSITION_LINE,
+            2 => &POSITION_NONE,
+            _ => &POSITION,
+        };
+        self.feature[weights::POSITION] = position_score(me, table) - position_score(opp, table);
         self.feature[weights::TEMPO] = 1;
     }
 }
 
-fn position_score(pieces: u64) -> i32 {
+fn position_score(pieces: u64, table: &[i32; CELLS]) -> i32 {
     let mut sum = 0;
     let mut p = pieces;
     while p != 0 {
-        sum += POSITION[p.trailing_zeros() as usize];
+        sum += table[p.trailing_zeros() as usize];
         p &= p - 1;
     }
     sum

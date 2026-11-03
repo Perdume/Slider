@@ -380,6 +380,12 @@ if env("RUN_CONTEMPT", True):
     sprt("dyncontempt50_30ms", ["--a", W, "--opts-a", "lmr2", "--tune-a", "dyn_contempt=50,dyn_threshold=100"],
          ["--b", W, "--opts-b", "lmr2"], note="형세 contempt 50 vs 0 (lmr2, 30ms)", max_games=1000)
 
+# ---------------------------------------------------------------- I. 위치 점수가 필요한가 (가운데와의 거리 vs 골의 줄 vs 없음)
+if env("RUN_POSTABLE", True):
+    for pt, name in ((1, "골의 줄"), (2, "없음")):
+        sprt(f"pos_table{pt}_30ms", ["--a", W, "--opts-a", "lmr2", "--tune-a", f"game,pos_table={pt}"],
+             ["--b", W, "--opts-b", "lmr2", "--tune-b", "game"], note=f"위치 점수 {name} vs 가운데 거리 (게임 설정, 30ms)", max_games=1000)
+
 # ---------------------------------------------------------------- 요약
 lines = [f"설정: {SETTINGS} | threads {THREADS} | 이번 실행 {time.time() - t_start:.0f}초"]
 for key, r in state.items():
