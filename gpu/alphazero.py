@@ -56,12 +56,81 @@ def init_params(key, hidden=256):
 
 
 def apply_net(params, x):
+    if "stem" in params:
+        return apply_conv(params, x)
     h = jax.nn.relu(x @ params["l1"]["w"] + params["l1"]["b"])
     h = h + jax.nn.relu(h @ params["l2"]["w"] + params["l2"]["b"])
     h = h + jax.nn.relu(h @ params["l3"]["w"] + params["l3"]["b"])
     logits = h @ params["policy"]["w"] + params["policy"]["b"]
     value = jnp.tanh(h @ params["value"]["w"] + params["value"]["b"])[..., 0]
     return logits, value
+
+
+# ------------------------------------------------------------------ 신경망 (합성곱 + 잔차, 알파제로식)
+# 7x7 판을 그대로 보고, 3x3 합성곱을 쌓아 "줄을 따라 미끄러지는" 관계를 칸의 위치와 무관하게 배운다.
+# 입력 판 7장: 타일 / 내 말 / 상대 말 / 내 첫째 말 / 내 둘째 말 (칸 번호 순서, 수 번호의 말 순서와 같음) / 골 / 1(판 가장자리 구분용)
+IN_PLANES = 7
+_GOAL_PLANE = np.zeros(sj.N, np.float32)
+_GOAL_PLANE[sj.GOAL] = 1.0
+
+
+def init_conv_params(key, channels=64, blocks=6):
+    ks = iter(jax.random.split(key, 2 * blocks + 8))
+
+    def conv(cin, cout, k=3, gain=1.0):
+        return {"w": jax.random.normal(next(ks), (k, k, cin, cout)) * np.sqrt(2.0 / (k * k * cin)) * gain, "b": jnp.zeros(cout)}
+
+    def dense(n_in, n_out, scale=None):
+        scale = np.sqrt(2.0 / n_in) if scale is None else scale
+        return {"w": jax.random.normal(next(ks), (n_in, n_out)) * scale, "b": jnp.zeros(n_out)}
+
+    return {
+        "stem": conv(IN_PLANES, channels),
+        # 둘째 합성곱을 작게 시작해서 처음에는 블록이 거의 그대로 통과시킨다 (BatchNorm 없이도 안정적으로 학습)
+        "blocks": [{"c1": conv(channels, channels), "c2": conv(channels, channels, gain=0.1)} for _ in range(blocks)],
+        "p_conv": conv(channels, 16, k=1),
+        "policy": dense(16 * sj.N, A, 0.01),
+        "v_conv": conv(channels, 8, k=1),
+        "v1": dense(8 * sj.N, 128),
+        "value": dense(128, 1, 0.01),
+    }
+
+
+def _conv(x, p):
+    y = jax.lax.conv_general_dilated(x, p["w"], (1, 1), "SAME", dimension_numbers=("NHWC", "HWIO", "NHWC"))
+    return y + p["b"]
+
+
+def _planes(x):
+    """[B, 147] -> [B, 7, 7, IN_PLANES]"""
+    t, me, op = x[:, :sj.N], x[:, sj.N:2 * sj.N], x[:, 2 * sj.N:]
+    c = jnp.cumsum(me, axis=1)
+    p0 = me * (c == 1)
+    p1 = me * (c == 2)
+    goal = jnp.broadcast_to(jnp.asarray(_GOAL_PLANE), t.shape)
+    one = jnp.ones_like(t)
+    return jnp.stack([t, me, op, p0, p1, goal, one], axis=-1).reshape(-1, 7, 7, IN_PLANES)
+
+
+def apply_conv(params, x):
+    lead = x.shape[:-1]
+    x = x.reshape(-1, OBS).astype(jnp.float32)
+    h = jax.nn.relu(_conv(_planes(x), params["stem"]))
+    for b in params["blocks"]:
+        h = jax.nn.relu(h + _conv(jax.nn.relu(_conv(h, b["c1"])), b["c2"]))
+    n = h.shape[0]
+    p = jax.nn.relu(_conv(h, params["p_conv"])).reshape(n, -1)
+    logits = p @ params["policy"]["w"] + params["policy"]["b"]
+    v = jax.nn.relu(_conv(h, params["v_conv"])).reshape(n, -1)
+    v = jax.nn.relu(v @ params["v1"]["w"] + params["v1"]["b"])
+    value = jnp.tanh(v @ params["value"]["w"] + params["value"]["b"])[..., 0]
+    return logits.reshape(*lead, A), value.reshape(lead)
+
+
+def make_params(key, arch="mlp", hidden=256, channels=64, blocks=6):
+    if arch == "conv":
+        return init_conv_params(key, channels, blocks)
+    return init_params(key, hidden)
 
 
 def masked_logits(logits, mask):
