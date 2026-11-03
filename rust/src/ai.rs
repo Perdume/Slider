@@ -1192,15 +1192,15 @@ impl SliderAi {
     /// 이동 수 / 걸어갈 수 있는 칸 / 계획은 양쪽 말 전부로 센다 (두 번째 말도 곧 움직이므로).
     #[allow(clippy::too_many_arguments)]
     fn compute_features(&mut self, tiles: u64, me: u64, opp: u64, mc: u64, oc: u64, reach_me: u64, list_me: &[i32], moves_me: usize) {
-        let (mut moves_opp, mut reach_opp) = generate_turn(tiles, opp, me, oc, &mut self.scratch);
-        let threats_opp = self.scratch[..moves_opp].iter().filter(|&&m| bb::dest(m) == GOAL).count() as i32;
-        if oc != opp {
-            (moves_opp, reach_opp) = bb::generate(tiles, opp, me, &mut self.scratch);
-        }
+        // 상대 말 전부의 수를 한 번만 만들고, 위협은 그중 oc 말의 골 수만 센다 (oc 말의 수는 따로 만든 것과 같다)
+        let (moves_opp, reach_opp) = bb::generate(tiles, opp, me, &mut self.scratch);
+        let threats_opp = self.scratch[..moves_opp].iter().filter(|&&m| bb::dest(m) == GOAL && (oc >> bb::src(m)) & 1 != 0).count() as i32;
         let mut list_full = std::mem::take(&mut self.scratch2);
         let (list_me, moves_me, reach_me) = if mc != me {
-            let (n, r) = bb::generate(tiles, me, opp, &mut list_full);
-            (&list_full[..], n, r)
+            // 지금 움직일 말(mc)의 수는 이미 있으니 다른 말의 수만 만들어 붙인다 (말 전부를 새로 만든 것과 같은 목록)
+            let (n2, r2) = generate_turn(tiles, me, opp, me & !mc, &mut list_full);
+            list_full[n2..n2 + moves_me].copy_from_slice(&list_me[..moves_me]);
+            (&list_full[..], n2 + moves_me, r2 | reach_me)
         } else {
             (list_me, moves_me, reach_me)
         };
