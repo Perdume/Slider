@@ -60,6 +60,8 @@ SETTINGS = {
     "SPSA_ITERS": env("SPSA_ITERS", 200),
     "SPSA_GAMES": env("SPSA_GAMES", 64),
     "SPSA_LR": env("SPSA_LR", 1.5),
+    # SPSA 대국만 수 제한을 둔다: 아주 긴 판 하나가 반복 전체를 붙잡지 않게 (무승부는 SPSA 계산에서 0 이라 영향이 작음)
+    "SPSA_MAX_PLIES": env("SPSA_MAX_PLIES", 300),
     "RUN_SPSA_W": env("RUN_SPSA_W", True),
     "SPSA_W_ITERS": env("SPSA_W_ITERS", 300),
 }
@@ -298,7 +300,7 @@ if S["RUN_SPSA"]:
             plus, minus = np.clip(theta + c * d, lo, hi), np.clip(theta - c * d, lo, hi)
             return [BIN / "matchup", "--a", W, "--opts-a", "lmr2", "--tune-a", tune_str(plus), "--b", W, "--opts-b", "lmr2",
                     "--tune-b", tune_str(minus), "--games", S["SPSA_GAMES"], "--time-ms", S["MATCH_TIME_MS"],
-                    "--max-plies", S["MAX_PLIES"], "--threads", max(1, THREADS // n), "--seed", 50_000 + k]
+                    "--max-plies", S["SPSA_MAX_PLIES"], "--threads", max(1, THREADS // n), "--seed", 50_000 + k]
 
         nets = spsa_batch(k0, n, make_cmd)
         for d, net in zip(deltas, nets):
@@ -307,8 +309,7 @@ if S["RUN_SPSA"]:
         sp["log"].append([k0 + n, [round(x, 3) for x in nets], tune_str(theta)])
         state["spsa"] = sp
         save_state()
-        if sp["iter"] % 20 == 0 or sp["iter"] >= S["SPSA_ITERS"]:
-            log(f"[SPSA {sp['iter']}/{S['SPSA_ITERS']}] {tune_str(theta)}")
+        log(f"[SPSA {sp['iter']}/{S['SPSA_ITERS']}] {tune_str(theta)}")
     final = tune_str(sp["theta"])
     state["spsa_result"] = {"note": "SPSA 결과 " + final}
     save_state()
@@ -348,7 +349,7 @@ if S["RUN_SPSA_W"]:
         def make_cmd(k, k0=k0, n=n):
             i = k - k0
             return [BIN / "matchup", "--a", WORK / f"spsa_w_plus{i}.json", "--opts-a", "lmr2", "--b", WORK / f"spsa_w_minus{i}.json",
-                    "--opts-b", "lmr2", "--games", S["SPSA_GAMES"], "--time-ms", S["MATCH_TIME_MS"], "--max-plies", S["MAX_PLIES"],
+                    "--opts-b", "lmr2", "--games", S["SPSA_GAMES"], "--time-ms", S["MATCH_TIME_MS"], "--max-plies", S["SPSA_MAX_PLIES"],
                     "--threads", max(1, THREADS // n), "--seed", 90_000 + k]
 
         nets = spsa_batch(k0, n, make_cmd)
@@ -359,7 +360,7 @@ if S["RUN_SPSA_W"]:
         state["spsa_w"] = spw
         save_state()
         k = spw["iter"] - 1
-        if (k + 1) % 20 == 0 or spw["iter"] >= S["SPSA_W_ITERS"]:
+        if True:
             log(f"[가중치 SPSA {k + 1}/{S['SPSA_W_ITERS']}] " + ", ".join(f"{n}={int(round(v))}" for n, v in zip(W_NAMES, theta)))
     new_w = write_w(OUT / "data" / "weights_spsa.json", np.array(spw["theta"]))
     state["spsa_w_result"] = {"note": "가중치 SPSA 결과 " + new_w.read_text()}
