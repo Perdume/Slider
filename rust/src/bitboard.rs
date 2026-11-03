@@ -97,7 +97,26 @@ pub fn is_tile(tiles: u64, cell: usize) -> bool {
 }
 
 /// start 에 있는 말이 걸어서 갈 수 있는 타일 칸들(start 포함)의 비트마스크. blocked 칸은 지나갈 수 없다.
+/// 비트보드 flood fill: 지금 집합을 상하좌우로 한 칸씩 넓혀 지나갈 수 있는 칸만 남기기를, 더 안 늘 때까지.
+#[inline]
 pub fn reach(tiles: u64, start: usize, blocked: u64) -> u64 {
+    const FULL: u64 = (1u64 << CELLS) - 1;
+    const COL_FIRST: u64 = 0x0040_8102_0408_1; // 각 행의 0열
+    const COL_LAST: u64 = COL_FIRST << (SIZE - 1); // 각 행의 6열
+    let s = 1u64 << start;
+    let free = (tiles & !blocked) | s;
+    let mut v = s;
+    loop {
+        let grown = (v | (v << SIZE) | (v >> SIZE) | ((v & !COL_LAST) << 1) | ((v & !COL_FIRST) >> 1)) & free & FULL;
+        if grown == v {
+            return v;
+        }
+        v = grown;
+    }
+}
+
+/// 예전 방식 (칸 하나씩 방문). 시험에서 새 방식과 같은지 확인하는 데 쓴다.
+pub fn reach_slow(tiles: u64, start: usize, blocked: u64) -> u64 {
     let mut visited = 1u64 << start;
     let mut frontier = visited;
     while frontier != 0 {
@@ -197,4 +216,28 @@ pub fn to_symbols(tiles: u64, me: u64, opp: u64, m: i32) -> Vec<&'static str> {
     symbols.reverse();
     symbols.push(slide);
     symbols
+}
+
+#[cfg(test)]
+mod reach_tests {
+    use super::*;
+
+    #[test]
+    fn flood_fill_matches_slow_reach() {
+        let mut x = 0x2545_F491_4F6C_DD1Du64;
+        for _ in 0..200_000 {
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            let tiles = x & ((1u64 << CELLS) - 1);
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            let blocked = x & (x >> 3) & ((1u64 << CELLS) - 1);
+            let start = (x % CELLS as u64) as usize;
+            let tiles = tiles | (1u64 << start);
+            let blocked = blocked & !(1u64 << start);
+            assert_eq!(reach(tiles, start, blocked), reach_slow(tiles, start, blocked));
+        }
+    }
 }
