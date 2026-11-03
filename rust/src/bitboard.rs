@@ -36,6 +36,47 @@ const fn neighbor_table() -> [[i8; 4]; CELLS] {
 
 pub static NEIGHBOR: [[i8; 4]; CELLS] = neighbor_table();
 
+/// RAY[cell][d] = cell 에서 d 방향으로 벽까지의 칸들 (cell 제외). 미끄러짐의 멈출 칸을 한 번에 찾는 데 쓴다.
+const fn ray_table() -> [[u64; 4]; CELLS] {
+    let nb = neighbor_table();
+    let mut table = [[0u64; 4]; CELLS];
+    let mut cell = 0;
+    while cell < CELLS {
+        let mut d = 0;
+        while d < 4 {
+            let mut c = nb[cell][d];
+            let mut m = 0u64;
+            while c >= 0 {
+                m |= 1u64 << c;
+                c = nb[c as usize][d];
+            }
+            table[cell][d] = m;
+            d += 1;
+        }
+        cell += 1;
+    }
+    table
+}
+
+pub static RAY: [[u64; 4]; CELLS] = ray_table();
+
+/// cell 의 타일이 d 방향으로 미끄러져 멈추는 칸 (첫 칸이 빈 칸이라고 가정). 방향 0 위, 1 아래, 2 왼쪽, 3 오른쪽.
+#[inline(always)]
+fn slide_stop(tiles: u64, cell: usize, d: usize) -> usize {
+    let ray = RAY[cell][d];
+    let blockers = tiles & ray;
+    // 위/왼쪽은 칸 번호가 작아지는 방향: 가장 가까운 장애물 = 가장 큰 번호, 벽 끝 = 가장 작은 번호
+    let up_like = d == 0 || d == 2;
+    let step = if d < 2 { SIZE } else { 1 };
+    if blockers == 0 {
+        if up_like { ray.trailing_zeros() as usize } else { 63 - ray.leading_zeros() as usize }
+    } else if up_like {
+        63 - blockers.leading_zeros() as usize + step
+    } else {
+        blockers.trailing_zeros() as usize - step
+    }
+}
+
 /// {row, col} 좌표 목록을 u64 비트마스크로 바꾼다.
 pub fn pieces(locs: &[(usize, usize)]) -> u64 {
     locs.iter().fold(0u64, |mask, &(r, c)| mask | 1u64 << (r * SIZE + c))
@@ -163,15 +204,7 @@ fn generate_from(tiles: u64, mut reach: u64, src: usize, out: &mut [i32], mut co
             if n < 0 || is_tile(tiles, n as usize) {
                 continue;
             }
-            let mut dest = n as usize;
-            loop {
-                let next = NEIGHBOR[dest][d];
-                if next >= 0 && !is_tile(tiles, next as usize) {
-                    dest = next as usize;
-                } else {
-                    break;
-                }
-            }
+            let dest = slide_stop(tiles, cell, d);
             out[count] = (cell | d << 6 | dest << 8 | src << 14) as i32;
             count += 1;
         }
@@ -221,6 +254,29 @@ pub fn to_symbols(tiles: u64, me: u64, opp: u64, m: i32) -> Vec<&'static str> {
 #[cfg(test)]
 mod reach_tests {
     use super::*;
+
+    #[test]
+    fn slide_stop_matches_walk() {
+        let mut x = 0x9E37_79B9_7F4A_7C15u64;
+        for _ in 0..200_000 {
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            let tiles = x & ((1u64 << CELLS) - 1);
+            let cell = (x >> 50) as usize % CELLS;
+            for d in 0..4 {
+                let n = NEIGHBOR[cell][d];
+                if n < 0 || is_tile(tiles, n as usize) {
+                    continue;
+                }
+                let mut dest = n as usize;
+                while NEIGHBOR[dest][d] >= 0 && !is_tile(tiles, NEIGHBOR[dest][d] as usize) {
+                    dest = NEIGHBOR[dest][d] as usize;
+                }
+                assert_eq!(slide_stop(tiles, cell, d), dest);
+            }
+        }
+    }
 
     #[test]
     fn flood_fill_matches_slow_reach() {
