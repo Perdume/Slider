@@ -20,3 +20,9 @@
 새 게임 설정 (새 규칙): `margin=77,trap=24,plan_ply=12,lmr_depth=2,lmr_index=1,lmr2_depth=4,lmr2_index=2`,
 가중치 `threat1=-943, threat2=-487, threat2PerThreat=-38, mobility=28, reach=-29, plan2=140, plan3=-3, plan4=65, plan5=36, position=69, tempo=2`.
 예전 규칙용 값은 `Tunables::game_free()`, `weights/tuned_free.json` 으로 남김 (`play --rules free` 가 자동으로 씀).
+
+### 새 기준(위 SPSA 값)에서의 실험 (slider-q, 30ms, SPRT [0,25])
+
+| 실험 | 결과 | 판정 |
+|---|---|---|
+| 다음다음 차례 위협 점수 nt_me=200, nt_opp=-200 | 203승 130무 153패 (486판), Elo +36 (+10 ~ +63) | 통과 |
