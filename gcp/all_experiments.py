@@ -206,6 +206,12 @@ if S["RUN_SMP"]:
     sprt("smp4_30ms", ["--a", W, "--search-threads-a", 4], ["--b", W], note="병렬 탐색 4스레드 vs 1스레드 (30ms)", game_threads=gt)
     sprt("smp4_150ms", ["--a", W, "--search-threads-a", 4], ["--b", W], limit=["--time-ms", 150],
          note="병렬 탐색 4스레드 vs 1스레드 (150ms)", game_threads=gt, max_games=300)
+    # 16스레드: 한 판이 코어 16개를 쓰므로 동시에 두는 판 수는 코어 / 16
+    gt16 = max(1, THREADS // 16)
+    sprt("smp16_30ms", ["--a", W, "--search-threads-a", 16], ["--b", W], note="병렬 탐색 16스레드 vs 1스레드 (30ms)",
+         game_threads=gt16, max_games=300)
+    sprt("smp16_vs_4_30ms", ["--a", W, "--search-threads-a", 16], ["--b", W, "--search-threads-b", 4],
+         note="병렬 탐색 16스레드 vs 4스레드 (30ms)", game_threads=gt16, max_games=300)
 
 if S["RUN_SMP"] or S["RUN_BIG_NN"]:
     # 섞어 쓰기: 1단계(안전한 수 찾기)는 선형 평가로 깊게, 2단계(안전한 수 중 고르기)만 신경망으로 깊이 4
