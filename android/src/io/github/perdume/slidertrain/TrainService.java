@@ -161,8 +161,8 @@ public class TrainService extends Service {
         String weights = r.getStringExtra("weightsJson");
         if (weights != null && !weights.trim().isEmpty()) {
             File w = new File(workDir, "weights.json");
-            try (FileOutputStream out = new FileOutputStream(w)) {
-                out.write(weights.getBytes(StandardCharsets.UTF_8));
+            try (FileOutputStream fo = new FileOutputStream(w)) {
+                fo.write(weights.getBytes(StandardCharsets.UTF_8));
             }
             add(c, "--weights", w.getAbsolutePath());
         }
