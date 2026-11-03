@@ -2,7 +2,8 @@
 //!
 //!   cargo run --release --bin play
 //! 옵션: --time-ms 1500 (AI 수당 시간) --threads N (AI 가 한 수에 쓰는 스레드, 기본 코어 수)
-//!       --search lmr2|lmr|none (탐색 개선, 기본 lmr2) --weights 경로|default|tuned (기본 tuned) --net 신경망 파일
+//!       --search lmr2|lmr|none (탐색 개선, 기본 lmr2) --tune game|default|이름=값,... (탐색 상수, 기본 game = SPSA 로 맞춘 값)
+//!       --weights 경로|default|tuned (기본 tuned) --net 신경망 파일
 //!
 //! 조작: 움직일 말 1 또는 2 를 고른 뒤 w(위) a(왼쪽) s(아래) d(오른쪽).
 //!   옆 칸이 타일이면 걸어가고 턴이 계속된다. 옆 칸이 빈 칸이면 서 있는 타일째 미끄러지고 턴이 끝난다.
@@ -14,7 +15,7 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::Instant;
 
-use slider::ai::{position_hash, History, SearchOptions, SliderAi, WIN_BOUND};
+use slider::ai::{position_hash, History, SearchOptions, SliderAi, Tunables, WIN_BOUND};
 use slider::arena::{SIDE0_START, SIDE1_START, START_BOARD};
 use slider::bitboard::{self as bb, GOAL, SIZE};
 use slider::cli;
@@ -123,6 +124,12 @@ fn run() -> Result<(), String> {
     let time_ms: u64 = cli::get(&opt, "time-ms", 1500)?;
     let threads: usize = cli::get(&opt, "threads", std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1))?;
     let opts = SearchOptions::parse(opt.get("search").map(String::as_str).unwrap_or("lmr2"))?;
+    // 탐색 상수: 기본은 SPSA 로 맞춘 게임용 값. --tune 으로 바꿈 (예: --tune margin=40,trap=60 / 예전 값은 --tune default)
+    let tune = match opt.get("tune").map(String::as_str) {
+        None | Some("game") => Tunables::game(),
+        Some("default") => Tunables::default(),
+        Some(t) => Tunables::parse(t)?,
+    };
     let weights = match opt.get("weights").map(String::as_str) {
         None | Some("tuned") => EvalWeights::from_json(TUNED)?,
         Some(other) => EvalWeights::from_argument(Some(other))?,
@@ -131,7 +138,7 @@ fn run() -> Result<(), String> {
         Some(p) => Some(Arc::new(Network::load(Path::new(p))?)),
         None => None,
     };
-    println!("AI: 수당 {}ms, 스레드 {}, 탐색 {}{}", time_ms, threads, opts, if net.is_some() { ", 신경망" } else { "" });
+    println!("AI: 수당 {}ms, 스레드 {}, 탐색 {}{}{}", time_ms, threads, opts, if tune == Tunables::game() { " + 튜닝 상수" } else { "" }, if net.is_some() { ", 신경망" } else { "" });
 
     let start = |locs: &[(usize, usize); 2]| [locs[0].0 * SIZE + locs[0].1, locs[1].0 * SIZE + locs[1].1];
     let mut st = State { tiles: bb::from_array(&START_BOARD), player: start(&SIDE0_START), ai: start(&SIDE1_START) };
@@ -142,7 +149,7 @@ fn run() -> Result<(), String> {
     let mut lines = stdin.lock().lines();
 
     loop {
-        let outcome = if player_to_move { player_turn(&mut st, &mut lines)? } else { ai_turn(&mut st, &history, time_ms, threads, opts, &weights, &net) };
+        let outcome = if player_to_move { player_turn(&mut st, &mut lines)? } else { ai_turn(&mut st, &history, time_ms, threads, opts, tune, &weights, &net) };
         match outcome {
             Outcome::Quit => {
                 println!("게임을 종료합니다.");
@@ -257,6 +264,7 @@ fn ai_turn(
     time_ms: u64,
     threads: usize,
     opts: SearchOptions,
+    tune: Tunables,
     weights: &EvalWeights,
     net: &Option<Arc<Network>>,
 ) -> Outcome {
@@ -268,6 +276,7 @@ fn ai_turn(
     }
     let mut ai = SliderAi::with_weights(time_ms, 40, weights);
     ai.set_options(opts);
+    ai.set_tunables(tune);
     ai.set_threads(threads);
     ai.set_net(net.clone());
     ai.set_game_history(history.clone());

@@ -4,12 +4,13 @@
 //!   입력 한 줄:  tiles me opp            (u64 비트보드 3개, me = 둘 차례인 쪽 말. tiles 에 말이 선 칸이 없어도 됨)
 //!   출력 한 줄:  move score depth        (move 는 엔진의 수 정수, 둘 수 없으면 -1 = 통과)
 //!
-//! 옵션: --time-ms 50 --weights 경로|default|tuned(기본) --search lmr2(기본)|lmr|none --threads 동시에 탐색할 국면 수(기본 코어 수)
+//! 옵션: --time-ms 50 --weights 경로|default|tuned(기본) --search lmr2(기본)|lmr|none --tune game(기본)|default|이름=값,...
+//!       --threads 동시에 탐색할 국면 수(기본 코어 수)
 use std::io::{self, BufRead, Write};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
 
-use slider::ai::{SearchOptions, SliderAi};
+use slider::ai::{SearchOptions, SliderAi, Tunables};
 use slider::cli;
 use slider::weights::EvalWeights;
 
@@ -28,6 +29,12 @@ fn run() -> Result<(), String> {
     let time_ms: u64 = cli::get(&opt, "time-ms", 50)?;
     let threads: usize = cli::get(&opt, "threads", cli::default_threads().max(1))?.max(1);
     let opts = SearchOptions::parse(opt.get("search").map(String::as_str).unwrap_or("lmr2"))?;
+    // 탐색 상수: 기본은 SPSA 로 맞춘 게임용 값. --tune 으로 바꿈 (예: --tune margin=40,trap=60 / 예전 값은 --tune default)
+    let tune = match opt.get("tune").map(String::as_str) {
+        None | Some("game") => Tunables::game(),
+        Some("default") => Tunables::default(),
+        Some(t) => Tunables::parse(t)?,
+    };
     let weights = match opt.get("weights").map(String::as_str) {
         None | Some("tuned") => EvalWeights::from_json(TUNED)?,
         Some(other) => EvalWeights::from_argument(Some(other))?,
@@ -59,6 +66,7 @@ fn run() -> Result<(), String> {
                     let (tiles, me, opp) = batch[i];
                     let mut ai = SliderAi::with_weights(time_ms, 40, &weights);
                     ai.set_options(opts);
+                    ai.set_tunables(tune);
                     let r = ai.search(tiles, me, opp);
                     results.lock().unwrap()[i] = (r.mv, r.score, r.depth);
                 });

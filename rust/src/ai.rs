@@ -229,10 +229,19 @@ impl Default for Tunables {
 }
 
 impl Tunables {
+    /// 게임용 상수: VM 에서 SPSA 200회로 맞추고 SPRT 로 확인한 값 (lmr2 엔진 기준, 기본 상수 대비 30ms Elo +50, 150ms Elo +53)
+    pub fn game() -> Self {
+        Tunables { margin: 39, trap: 38, plan_ply: 9, lmr_depth: 2, lmr_index: 1, lmr2_depth: 3, lmr2_index: 6, ..Tunables::default() }
+    }
+
     /// "margin=40,trap=60,plan_ply=5,lmr_depth=3,lmr_index=3,lmr2_depth=5,lmr2_index=6" (일부만 줘도 됨)
     pub fn parse(text: &str) -> Result<Self, String> {
         let mut t = Tunables::default();
         for part in text.split(',').map(str::trim).filter(|p| !p.is_empty()) {
+            if part == "game" {
+                t = Tunables::game();
+                continue;
+            }
             let (k, v) = part.split_once('=').ok_or_else(|| format!("이름=값 형식이 아닙니다: {}", part))?;
             let v: i32 = v.trim().parse().map_err(|_| format!("숫자가 아닙니다: {}", part))?;
             match k.trim() {
