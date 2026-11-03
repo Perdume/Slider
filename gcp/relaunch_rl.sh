@@ -8,7 +8,7 @@ if [ "$st" = RUNNING ] || [ "$st" = STAGING ] || [ "$st" = PROVISIONING ]; then 
 [ -n "$line" ] && { echo "남은 GPU VM 정리 ($st)"; $G compute instances delete slider-gpu --zone $zone $PR --quiet 2>&1 | tail -1; }
 left=$(( (END - NOW) / 60 ))
 if [ $left -lt 40 ]; then echo "끝낼 시각까지 ${left}분뿐이라 새로 띄우지 않음"; exit 0; fi
-for z in us-central1-a us-central1-b us-central1-f us-central1-c; do
+for z in us-east1-c us-east1-d us-west1-b us-west1-a us-central1-f us-central1-c us-central1-a us-central1-b; do
   if $G compute instances create slider-gpu $PR --zone $z --machine-type n1-standard-8 --accelerator type=nvidia-tesla-t4,count=1 \
       --maintenance-policy TERMINATE --provisioning-model SPOT --instance-termination-action DELETE --max-run-duration ${left}m \
       --image-family common-cu129-ubuntu-2404-nvidia-580 --image-project deeplearning-platform-release --boot-disk-size 50GB \
