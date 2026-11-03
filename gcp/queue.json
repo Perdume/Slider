@@ -1,5 +1,6 @@
 [
- {"key": "c_combo_30ms", "note": "[순환] 히스토리 감점 + 다음다음 위협(200) vs 게임 설정, 30ms", "a": ["--a", "{W}", "--opts-a", "lmr2,hm", "--tune-a", "game,nt_me=200,nt_opp=-200"], "b": ["--b", "{W}", "--opts-b", "lmr2", "--tune-b", "game"], "time_ms": 30, "max_games": 2000},
- {"key": "c_combo_150ms", "note": "[순환] 히스토리 감점 + 다음다음 위협(200) vs 게임 설정, 150ms", "a": ["--a", "{W}", "--opts-a", "lmr2,hm", "--tune-a", "game,nt_me=200,nt_opp=-200"], "b": ["--b", "{W}", "--opts-b", "lmr2", "--tune-b", "game"], "time_ms": 150, "max_games": 800},
- {"key": "c_nt300_30ms", "note": "[순환] 다음다음 위협 300 (+hm) vs 200 (+hm), 30ms", "a": ["--a", "{W}", "--opts-a", "lmr2,hm", "--tune-a", "game,nt_me=300,nt_opp=-300"], "b": ["--b", "{W}", "--opts-b", "lmr2,hm", "--tune-b", "game,nt_me=200,nt_opp=-200"], "time_ms": 30, "max_games": 2000}
+ {"key": "nt450_300", "note": "[순환] nt_me=450,nt_opp=-300 vs 게임(300/-300)", "a": ["--a", "{W}", "--opts-a", "lmr2,hm", "--tune-a", "game,nt_me=450,nt_opp=-300"], "b": ["--b", "{W}", "--opts-b", "lmr2,hm", "--tune-b", "game"], "time_ms": 30, "max_games": 2000},
+ {"key": "nt300_0", "note": "[순환] nt_me=300,nt_opp=0 vs 게임(300/-300)", "a": ["--a", "{W}", "--opts-a", "lmr2,hm", "--tune-a", "game,nt_me=300,nt_opp=0"], "b": ["--b", "{W}", "--opts-b", "lmr2,hm", "--tune-b", "game"], "time_ms": 30, "max_games": 2000},
+ {"key": "nt300_p100", "note": "[순환] nt_me=300,nt_opp=+100 vs 게임(300/-300)", "a": ["--a", "{W}", "--opts-a", "lmr2,hm", "--tune-a", "game,nt_me=300,nt_opp=100"], "b": ["--b", "{W}", "--opts-b", "lmr2,hm", "--tune-b", "game"], "time_ms": 30, "max_games": 2000},
+ {"key": "nt600_600", "note": "[순환] nt_me=600,nt_opp=-600 vs 게임(300/-300)", "a": ["--a", "{W}", "--opts-a", "lmr2,hm", "--tune-a", "game,nt_me=600,nt_opp=-600"], "b": ["--b", "{W}", "--opts-b", "lmr2,hm", "--tune-b", "game"], "time_ms": 30, "max_games": 2000}
 ]
