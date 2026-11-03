@@ -134,7 +134,7 @@ fn run() -> Result<(), String> {
         Err(_) => (0, start.clone()),
     };
     let cfg = Config { time_ms, max_depth: 40, max_plies: 400, random_plies: 6, epsilon: 0.0, rules: Rules::Cycle };
-    let opts = SearchOptions::parse("lmr2")?;
+    let opts = SearchOptions::parse(opt.get("search").map(String::as_str).unwrap_or("lmr2,hm"))?;
     println!("SPSA (새 규칙): 반복당 {}판, 수당 {}ms, 스레드 {}, 저장 {}", games, time_ms, threads, out.display());
 
     while iter < iters && !stop.should_stop() {

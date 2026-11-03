@@ -5,7 +5,7 @@
 //!   차례는 나부터 시계 방향으로 말 하나씩: 오른쪽 위(나 1) -> 오른쪽 아래(AI X) -> 왼쪽 아래(나 2) -> 왼쪽 위(AI Y) -> ...
 //!   --rules free 는 예전 규칙 (위쪽 두 귀퉁이 나, 아래쪽 AI, 차례마다 말 아무거나).
 //! 옵션: --time-ms 1500 (AI 수당 시간) --threads N (AI 가 한 수에 쓰는 스레드, 기본 코어 수)
-//!       --search lmr2|lmr|none (탐색 개선, 기본 lmr2) --tune game|default|이름=값,... (탐색 상수, 기본 game = SPSA 로 맞춘 값)
+//!       --search lmr2,hm|lmr2|none (탐색 개선, 기본 lmr2,hm) --tune game|default|이름=값,... (탐색 상수, 기본 game = SPSA 로 맞춘 값)
 //!       --weights 경로|default|tuned (기본 tuned) --net 신경망 파일
 //!
 //! 조작: (free 규칙이면 움직일 말 1 또는 2 를 고른 뒤) w(위) a(왼쪽) s(아래) d(오른쪽).
@@ -149,7 +149,7 @@ fn run() -> Result<(), String> {
     let opt = cli::parse_args(&args)?;
     let time_ms: u64 = cli::get(&opt, "time-ms", 1500)?;
     let threads: usize = cli::get(&opt, "threads", std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1))?;
-    let opts = SearchOptions::parse(opt.get("search").map(String::as_str).unwrap_or("lmr2"))?;
+    let opts = SearchOptions::parse(opt.get("search").map(String::as_str).unwrap_or("lmr2,hm"))?;
     // 탐색 상수: 기본은 SPSA 로 맞춘 게임용 값. --tune 으로 바꿈 (예: --tune margin=40,trap=60 / 예전 값은 --tune default)
     let rules = Rules::parse(opt.get("rules").map(String::as_str).unwrap_or("cycle"))?;
     let tune = match opt.get("tune").map(String::as_str) {
