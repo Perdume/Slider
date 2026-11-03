@@ -1,4 +1,3 @@
 [
- {"key": "total_150ms", "note": "[순환] 지금 게임 설정 vs 오늘 오후 설정(예전 규칙 값), 150ms", "a": ["--a", "{W}", "--opts-a", "lmr2,hm", "--tune-a", "game"], "b": ["--b", "{REPO}/weights/tuned_free.json", "--opts-b", "lmr2", "--tune-b", "game_free"], "time_ms": 150, "max_games": 400},
  {"key": "total_500ms_4t", "note": "[순환] 지금 게임 설정 vs 오늘 오후 설정, 500ms x 4스레드", "a": ["--a", "{W}", "--opts-a", "lmr2,hm", "--tune-a", "game", "--search-threads-a", "4"], "b": ["--b", "{REPO}/weights/tuned_free.json", "--opts-b", "lmr2", "--tune-b", "game_free", "--search-threads-b", "4"], "time_ms": 500, "max_games": 160, "search_threads": 4}
 ]
