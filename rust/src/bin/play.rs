@@ -27,6 +27,8 @@ use slider::weights::EvalWeights;
 
 /// 레포의 weights/tuned.json (Colab 에서 튜닝한 가중치). 기본 가중치보다 강했다.
 const TUNED: &str = include_str!("../../../weights/tuned.json");
+/// 예전 규칙(--rules free)용 가중치
+const TUNED_FREE: &str = include_str!("../../../weights/tuned_free.json");
 const PLAYER_MARK: [char; 2] = ['1', '2'];
 const AI_MARK: [char; 2] = ['X', 'Y'];
 // w a s d -> bitboard 방향 번호 (0 위, 1 아래, 2 왼쪽, 3 오른쪽)
@@ -149,12 +151,15 @@ fn run() -> Result<(), String> {
     let threads: usize = cli::get(&opt, "threads", std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1))?;
     let opts = SearchOptions::parse(opt.get("search").map(String::as_str).unwrap_or("lmr2"))?;
     // 탐색 상수: 기본은 SPSA 로 맞춘 게임용 값. --tune 으로 바꿈 (예: --tune margin=40,trap=60 / 예전 값은 --tune default)
+    let rules = Rules::parse(opt.get("rules").map(String::as_str).unwrap_or("cycle"))?;
     let tune = match opt.get("tune").map(String::as_str) {
+        None if rules == Rules::Free => Tunables::game_free(),
         None | Some("game") => Tunables::game(),
         Some("default") => Tunables::default(),
         Some(t) => Tunables::parse(t)?,
     };
     let weights = match opt.get("weights").map(String::as_str) {
+        None if rules == Rules::Free => EvalWeights::from_json(TUNED_FREE)?,
         None | Some("tuned") => EvalWeights::from_json(TUNED)?,
         Some(other) => EvalWeights::from_argument(Some(other))?,
     };
@@ -162,9 +167,8 @@ fn run() -> Result<(), String> {
         Some(p) => Some(Arc::new(Network::load(Path::new(p))?)),
         None => None,
     };
-    println!("AI: 수당 {}ms, 스레드 {}, 탐색 {}{}{}", time_ms, threads, opts, if tune == Tunables::game() { " + 튜닝 상수" } else { "" }, if net.is_some() { ", 신경망" } else { "" });
+    println!("AI: 수당 {}ms, 스레드 {}, 탐색 {}{}{}", time_ms, threads, opts, if tune == Tunables::game() || tune == Tunables::game_free() { " + 튜닝 상수" } else { "" }, if net.is_some() { ", 신경망" } else { "" });
 
-    let rules = Rules::parse(opt.get("rules").map(String::as_str).unwrap_or("cycle"))?;
     let start = |locs: &[(usize, usize); 2]| [locs[0].0 * SIZE + locs[0].1, locs[1].0 * SIZE + locs[1].1];
     let mut st = match rules {
         Rules::Cycle => State { tiles: bb::from_array(&START_BOARD), player: start(&CYCLE_SIDE0_START), ai: start(&CYCLE_SIDE1_START), turn: Some([0, 0]) },

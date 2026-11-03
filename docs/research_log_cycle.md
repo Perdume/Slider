@@ -15,3 +15,8 @@
 
 - 무승부: 0~11% (예전 규칙 약 70%). 엔진 자가대전 2000판 기준 2.5%.
 - 강화학습 (합성곱 64x6, T4): 엔진 판 사전학습 후 엔진 수 맞히기 83.4%. 반복 10 에서 Rust 엔진 상대 0승 2무 62패 (0.02), 반복당 약 230초.
+| **새 규칙 SPSA (상수 7 + 가중치 11, 320회)** vs 지금 게임 설정 | 30ms: 52승 11무 11패, **Elo +217**. 150ms: 44승 20무 6패, **Elo +211** | **통과 → 게임 기본값으로** |
+
+새 게임 설정 (새 규칙): `margin=77,trap=24,plan_ply=12,lmr_depth=2,lmr_index=1,lmr2_depth=4,lmr2_index=2`,
+가중치 `threat1=-943, threat2=-487, threat2PerThreat=-38, mobility=28, reach=-29, plan2=140, plan3=-3, plan4=65, plan5=36, position=69, tempo=2`.
+예전 규칙용 값은 `Tunables::game_free()`, `weights/tuned_free.json` 으로 남김 (`play --rules free` 가 자동으로 씀).

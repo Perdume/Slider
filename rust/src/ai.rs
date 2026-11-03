@@ -292,8 +292,13 @@ impl Default for Tunables {
 }
 
 impl Tunables {
-    /// 게임용 상수: VM 에서 SPSA 200회로 맞추고 SPRT 로 확인한 값 (lmr2 엔진 기준, 기본 상수 대비 30ms Elo +50, 150ms Elo +53)
+    /// 게임용 상수 (새 규칙): VM 에서 상수+가중치를 같이 SPSA 320회로 맞춘 값. 예전 게임 설정 대비 30ms Elo +217, 150ms Elo +211
     pub fn game() -> Self {
+        Tunables { margin: 77, trap: 24, plan_ply: 12, lmr_depth: 2, lmr_index: 1, lmr2_depth: 4, lmr2_index: 2, ..Tunables::default() }
+    }
+
+    /// 예전 규칙(free)용 게임 상수: 예전 규칙에서 SPSA 200회로 맞춘 값 (기본 상수 대비 Elo +50)
+    pub fn game_free() -> Self {
         Tunables { margin: 39, trap: 38, plan_ply: 9, lmr_depth: 2, lmr_index: 1, lmr2_depth: 3, lmr2_index: 6, ..Tunables::default() }
     }
 
@@ -303,6 +308,10 @@ impl Tunables {
         for part in text.split(',').map(str::trim).filter(|p| !p.is_empty()) {
             if part == "game" {
                 t = Tunables::game();
+                continue;
+            }
+            if part == "game_free" {
+                t = Tunables::game_free();
                 continue;
             }
             if part == "default" {
