@@ -1,6 +1,13 @@
 [
- {"key": "cyc_tuned_vs_default_w", "note": "[순환] 튜닝 가중치 vs 기본 가중치, 30ms", "a": ["--a", "{W}", "--opts-a", "lmr2", "--tune-a", "game"], "b": ["--b", "default", "--opts-b", "lmr2", "--tune-b", "game"], "time_ms": 30, "max_games": 2000},
- {"key": "cyc_game_vs_default_tune", "note": "[순환] SPSA 탐색 상수 vs 기본 상수, 30ms", "a": ["--a", "{W}", "--opts-a", "lmr2", "--tune-a", "game"], "b": ["--b", "{W}", "--opts-b", "lmr2", "--tune-b", "default"], "time_ms": 30, "max_games": 2000},
- {"key": "cyc_lmr2_vs_none", "note": "[순환] lmr2 vs 탐색 개선 없음, 30ms", "a": ["--a", "{W}", "--opts-a", "lmr2", "--tune-a", "game"], "b": ["--b", "{W}", "--opts-b", "none", "--tune-b", "game"], "time_ms": 30, "max_games": 2000},
- {"key": "cyc_trap0", "note": "[순환] 함정 보너스 끔(trap=0) vs 게임 설정, 30ms", "a": ["--a", "{W}", "--opts-a", "lmr2", "--tune-a", "game,trap=0"], "b": ["--b", "{W}", "--opts-b", "lmr2", "--tune-b", "game"], "time_ms": 30, "max_games": 2000}
+ {"key": "n_nt200", "note": "[순환] 다음다음 차례 위협 점수 nt_me=200,nt_opp=-200", "a": ["--a", "{W}", "--opts-a", "lmr2", "--tune-a", "game,nt_me=200,nt_opp=-200"], "b": ["--b", "{W}", "--opts-b", "lmr2", "--tune-b", "game"], "time_ms": 30, "max_games": 2000},
+ {"key": "n_nt80", "note": "[순환] 다음다음 차례 위협 점수 nt_me=80,nt_opp=-80", "a": ["--a", "{W}", "--opts-a", "lmr2", "--tune-a", "game,nt_me=80,nt_opp=-80"], "b": ["--b", "{W}", "--opts-b", "lmr2", "--tune-b", "game"], "time_ms": 30, "max_games": 2000},
+ {"key": "n_lmp", "note": "[순환] LMP 추가 vs 게임 설정", "a": ["--a", "{W}", "--opts-a", "lmr2,lmp", "--tune-a", "game"], "b": ["--b", "{W}", "--opts-b", "lmr2", "--tune-b", "game"], "time_ms": 30, "max_games": 2000},
+ {"key": "n_cm", "note": "[순환] countermove 추가 vs 게임 설정", "a": ["--a", "{W}", "--opts-a", "lmr2,cm", "--tune-a", "game"], "b": ["--b", "{W}", "--opts-b", "lmr2", "--tune-b", "game"], "time_ms": 30, "max_games": 2000},
+ {"key": "n_hm", "note": "[순환] 히스토리 감점 추가 vs 게임 설정", "a": ["--a", "{W}", "--opts-a", "lmr2,hm", "--tune-a", "game"], "b": ["--b", "{W}", "--opts-b", "lmr2", "--tune-b", "game"], "time_ms": 30, "max_games": 2000},
+ {"key": "n_ch", "note": "[순환] 연속 히스토리 추가 vs 게임 설정", "a": ["--a", "{W}", "--opts-a", "lmr2,ch", "--tune-a", "game"], "b": ["--b", "{W}", "--opts-b", "lmr2", "--tune-b", "game"], "time_ms": 30, "max_games": 2000},
+ {"key": "n_fut", "note": "[순환] futility 추가 vs 게임 설정", "a": ["--a", "{W}", "--opts-a", "lmr2,fut", "--tune-a", "game"], "b": ["--b", "{W}", "--opts-b", "lmr2", "--tune-b", "game"], "time_ms": 30, "max_games": 2000},
+ {"key": "n_ext", "note": "[순환] 위협 연장 추가 vs 게임 설정", "a": ["--a", "{W}", "--opts-a", "lmr2,ext", "--tune-a", "game"], "b": ["--b", "{W}", "--opts-b", "lmr2", "--tune-b", "game"], "time_ms": 30, "max_games": 2000},
+ {"key": "n_qs", "note": "[순환] 위협 정리 탐색 추가 vs 게임 설정", "a": ["--a", "{W}", "--opts-a", "lmr2,qs", "--tune-a", "game"], "b": ["--b", "{W}", "--opts-b", "lmr2", "--tune-b", "game"], "time_ms": 30, "max_games": 2000},
+ {"key": "n_nmp", "note": "[순환] 널무브 추가 vs 게임 설정", "a": ["--a", "{W}", "--opts-a", "lmr2,nmp", "--tune-a", "game"], "b": ["--b", "{W}", "--opts-b", "lmr2", "--tune-b", "game"], "time_ms": 30, "max_games": 2000},
+ {"key": "n_pvs", "note": "[순환] PVS 추가 vs 게임 설정", "a": ["--a", "{W}", "--opts-a", "lmr2,pvs", "--tune-a", "game"], "b": ["--b", "{W}", "--opts-b", "lmr2", "--tune-b", "game"], "time_ms": 30, "max_games": 2000}
 ]

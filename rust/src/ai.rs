@@ -279,11 +279,15 @@ pub struct Tunables {
     /// futility: 이 깊이 이하에서 평가 + fut_margin × 깊이 <= alpha 이면 자른다
     pub fut_depth: i32,
     pub fut_margin: i32,
+    /// 순환 규칙 평가: 내 다른 말(다음다음 차례에 움직일 말)이 지금 골에 멈출 수 있는 수의 개수에 곱하는 점수
+    pub nt_me: i32,
+    /// 순환 규칙 평가: 상대 다른 말(상대의 그다음 차례 말)이 골에 멈출 수 있는 수의 개수에 곱하는 점수
+    pub nt_opp: i32,
 }
 
 impl Default for Tunables {
     fn default() -> Self {
-        Tunables { margin: MARGIN, trap: TRAP_WEIGHT, plan_ply: PLAN_PLY, lmr_depth: 3, lmr_index: 3, lmr2_depth: 5, lmr2_index: 6, contempt: 0, dyn_contempt: 0, dyn_threshold: 100, pos_table: 0, lmp_depth: 2, lmp_base: 4, fut_depth: 1, fut_margin: 150 }
+        Tunables { margin: MARGIN, trap: TRAP_WEIGHT, plan_ply: PLAN_PLY, lmr_depth: 3, lmr_index: 3, lmr2_depth: 5, lmr2_index: 6, contempt: 0, dyn_contempt: 0, dyn_threshold: 100, pos_table: 0, lmp_depth: 2, lmp_base: 4, fut_depth: 1, fut_margin: 150, nt_me: 0, nt_opp: 0 }
     }
 }
 
@@ -323,6 +327,8 @@ impl Tunables {
                 "lmp_base" => t.lmp_base = v.max(1),
                 "fut_depth" => t.fut_depth = v,
                 "fut_margin" => t.fut_margin = v.max(0),
+                "nt_me" => t.nt_me = v,
+                "nt_opp" => t.nt_opp = v,
                 other => return Err(format!("알 수 없는 탐색 상수: {}", other)),
             }
         }
@@ -341,6 +347,8 @@ pub struct SliderAi {
     /// 있으면 말단 평가에 신경망 출력을 더한다
     net: Option<Arc<Network>>,
     feature: [i32; weights::COUNT],
+    /// 순환 규칙 추가 특징 [내 다른 말의 골 수, 상대 다른 말의 골 수] (자유 규칙이면 0)
+    cyc: [i32; 2],
 
     /// 트랜스포지션 테이블 (병렬 탐색 때 스레드끼리 공유). 칸 하나 = [tiles, me, opp, score | move << 32, depth | flag << 8 | mode << 16]
     tt: Arc<SharedTt>,
@@ -509,6 +517,7 @@ impl SliderAi {
             weights,
             net: None,
             feature: [0; weights::COUNT],
+            cyc: [0; 2],
             tt,
             threads: 1,
             helper_id: 0,
@@ -1162,6 +1171,7 @@ impl SliderAi {
         for i in 0..weights::COUNT {
             score += self.weights[i] * self.feature[i];
         }
+        score += self.tune.nt_me * self.cyc[0] + self.tune.nt_opp * self.cyc[1];
         if let Some(net) = &self.net {
             score += net.eval(tiles, me, opp, &self.feature);
         }
@@ -1205,6 +1215,13 @@ impl SliderAi {
         };
         self.feature[weights::POSITION] = position_score(me, table) - position_score(opp, table);
         self.feature[weights::TEMPO] = 1;
+        self.cyc = [0; 2];
+        if mc != me {
+            // 다음다음 차례의 위협: 내 다른 말 / 상대 다른 말이 지금 판에서 골에 멈출 수 있는 수
+            let (mo, oo) = ((me & !mc).trailing_zeros() as usize, (opp & !oc).trailing_zeros() as usize);
+            self.cyc[0] = list_me[..moves_me].iter().filter(|&&m| bb::src(m) == mo && bb::dest(m) == GOAL).count() as i32;
+            self.cyc[1] = self.scratch[..moves_opp].iter().filter(|&&m| bb::src(m) == oo && bb::dest(m) == GOAL).count() as i32;
+        }
         self.scratch2 = list_full;
     }
 }
