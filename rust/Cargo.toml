@@ -30,6 +30,10 @@ name = "play"
 path = "src/bin/play.rs"
 
 [[bin]]
+name = "watch"
+path = "src/bin/watch.rs"
+
+[[bin]]
 name = "spsa"
 path = "src/bin/spsa.rs"
 

@@ -87,7 +87,7 @@ public class TrainService extends Service {
         }
         running = true;
         workDir = workDir(this);
-        startForeground(NOTIFICATION_ID, notification("튜닝을 시작합니다"));
+        startForeground(NOTIFICATION_ID, notification("watch".equals(intent.getStringExtra("mode")) ? "AI 대국을 둡니다" : "튜닝을 시작합니다"));
         PowerManager pm = (PowerManager) getSystemService(Context.POWER_SERVICE);
         wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "slidertrain:train");
         wakeLock.acquire(24L * 60 * 60 * 1000);
@@ -137,6 +137,9 @@ public class TrainService extends Service {
 
     private List<String> buildCommand(Intent r, File stopFile) throws IOException {
         File lib = new File(getApplicationInfo().nativeLibraryDir);
+        if ("watch".equals(r.getStringExtra("mode"))) {
+            return watchCommand(r, lib, stopFile);
+        }
         File bin = new File(lib, "libspsa.so");
         if (!bin.exists()) {
             throw new IOException("실행 파일이 없습니다 (이 기기는 arm64 가 아닐 수 있습니다): " + bin);
@@ -165,6 +168,35 @@ public class TrainService extends Service {
                 fo.write(weights.getBytes(StandardCharsets.UTF_8));
             }
             add(c, "--weights", w.getAbsolutePath());
+        }
+        return c;
+    }
+
+    /** AI 끼리 한 판 (libwatch.so): 매 수마다 판을 로그로 */
+    private List<String> watchCommand(Intent r, File lib, File stopFile) throws IOException {
+        File bin = new File(lib, "libwatch.so");
+        if (!bin.exists()) {
+            throw new IOException("실행 파일이 없습니다: " + bin);
+        }
+        List<String> c = new ArrayList<>();
+        c.add(bin.getAbsolutePath());
+        add(c, "--time-ms", String.valueOf(r.getIntExtra("watchMs", 500)));
+        add(c, "--delay-ms", "700");
+        add(c, "--stop-file", stopFile.getAbsolutePath());
+        add(c, "--threads", String.valueOf(r.getIntExtra("threads", 2)));
+        add(c, "--random-plies", "2");
+        add(c, "--seed", String.valueOf(System.currentTimeMillis() % 100000));
+        if (r.getBooleanExtra("watchTuned", false)) {
+            File out = outDir(this);
+            File t = new File(out, "spsa_tune.txt");
+            File w = new File(out, "spsa_weights.json");
+            if (t.exists() && w.exists()) {
+                byte[] b = java.nio.file.Files.readAllBytes(t.toPath());
+                add(c, "--tune-a", new String(b, StandardCharsets.UTF_8).trim());
+                add(c, "--weights-a", w.getAbsolutePath());
+            } else {
+                log("(튜닝 결과가 아직 없어서 양쪽 모두 게임 기본값으로 둡니다)");
+            }
         }
         return c;
     }

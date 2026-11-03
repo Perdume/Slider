@@ -14,7 +14,7 @@ NDK="$(ls -d "$SDK"/ndk/* | sort -V | tail -1)"
 CLANG="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android24-clang"
 TARGET=aarch64-linux-android
 OUT="$HERE/build"
-APP_BINS=(spsa)
+APP_BINS=(spsa watch)
 
 for f in "$PLATFORM" "$CLANG" "$BT/aapt2" "$BT/d8" "$BT/zipalign" "$BT/apksigner"; do
   [ -e "$f" ] || { echo "없음: $f" >&2; exit 1; }
@@ -32,7 +32,7 @@ done
 
 echo "== 2/6 매니페스트 링크 (aapt2)"
 "$BT/aapt2" link -o "$OUT/base.apk" -I "$PLATFORM" --manifest "$HERE/AndroidManifest.xml" \
-  --min-sdk-version 29 --target-sdk-version 33 --version-code 2 --version-name 0.2
+  --min-sdk-version 29 --target-sdk-version 33 --version-code 3 --version-name 0.3
 
 echo "== 3/6 Java 컴파일"
 # android.jar 에는 람다에 필요한 java.lang.invoke 가 없어서, 자바 API 는 JDK(--release 8)에서 가져오고 안드로이드 API 만 android.jar 에서 가져온다

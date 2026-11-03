@@ -34,8 +34,8 @@ import java.util.Locale;
 /** 설정을 입력하고 튜닝(SPSA)을 시작/중지하는 화면. 화면은 코드로 만든다 (리소스 파일 없음). */
 public class MainActivity extends Activity {
     private SharedPreferences prefs;
-    private EditText games, timeMs, threads, iters, tune, weights;
-    private CheckBox reset;
+    private EditText games, timeMs, threads, iters, tune, weights, watchMs;
+    private CheckBox reset, watchTuned;
     private TextView status, logView;
     private ScrollView logScroll;
     private Button start, stop;
@@ -99,6 +99,16 @@ public class MainActivity extends Activity {
         buttons.addView(stop, weight());
         root.addView(buttons);
 
+        TextView wt = new TextView(this);
+        wt.setText("\nAI 대국 보기: AI 끼리 한 판을 두며 매 수마다 판, 움직인 말, 형세 점수를 아래 로그에 보여 줍니다.");
+        root.addView(wt);
+        watchMs = field(root, "대국 보기 수당 생각 시간(ms)", "watchMs", "500");
+        watchTuned = new CheckBox(this);
+        watchTuned.setText("A 쪽(말 1, 2)은 튜닝 중인 값으로 (B 쪽 X, Y 는 게임 기본값)");
+        watchTuned.setChecked(prefs.getBoolean("watchTuned", false));
+        root.addView(watchTuned);
+        root.addView(button("AI 대국 보기", v -> startWatch()));
+
         LinearLayout buttons2 = new LinearLayout(this);
         buttons2.setOrientation(LinearLayout.HORIZONTAL);
         buttons2.addView(button("결과를 다운로드 폴더에 저장", v -> saveResult()), weight());
@@ -159,6 +169,23 @@ public class MainActivity extends Activity {
         i.putExtra("weightsJson", weights.getText().toString());
         i.putExtra("reset", reset.isChecked());
         reset.setChecked(false);
+        startForegroundService(i);
+    }
+
+    private void startWatch() {
+        if (TrainService.running) {
+            Toast.makeText(this, "튜닝이 돌고 있습니다. 중지한 뒤에 보세요", Toast.LENGTH_LONG).show();
+            return;
+        }
+        saveSettings();
+        synchronized (TrainService.LOG) {
+            TrainService.LOG.setLength(0);
+        }
+        Intent i = new Intent(this, TrainService.class).setAction(TrainService.ACTION_START);
+        i.putExtra("mode", "watch");
+        i.putExtra("watchMs", Math.max(10, intOf(watchMs, 500)));
+        i.putExtra("threads", Math.max(1, intOf(threads, 2)));
+        i.putExtra("watchTuned", watchTuned.isChecked());
         startForegroundService(i);
     }
 
@@ -239,6 +266,8 @@ public class MainActivity extends Activity {
                 .putString("iters", iters.getText().toString())
                 .putString("tune", tune.getText().toString())
                 .putString("weights", weights.getText().toString())
+                .putString("watchMs", watchMs.getText().toString())
+                .putBoolean("watchTuned", watchTuned.isChecked())
                 .apply();
     }
 
