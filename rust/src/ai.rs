@@ -168,6 +168,11 @@ pub struct SearchOptions {
     pub nnplan: bool,
     /// 널무브: 한 수 쉬어도(차례를 넘겨도) 충분히 좋으면 더 보지 않고 자른다 (상대가 바로 이길 수 있는 국면에서는 안 씀)
     pub nmp: bool,
+    /// 위협 정리 탐색 (체스의 quiescence search): 깊이 0 에서 상대의 즉시 승리 위협이 있으면 그걸 막는 수만 더 둬 보고,
+    /// 위협이 없는 조용한 국면에서 평가한다. 막을 수 없으면 진 국면
+    pub qs: bool,
+    /// qs + 위협이 없을 때 "내가 위협을 만드는 수" 도 둬 본다 (체스에서 잡는 수만 더 보는 것과 같음)
+    pub qs2: bool,
 }
 
 impl SearchOptions {
@@ -184,7 +189,12 @@ impl SearchOptions {
                 }
                 "nmp" => o.nmp = true,
                 "nnplan" => o.nnplan = true,
-                other => return Err(format!("알 수 없는 탐색 옵션: {} (pvs, lmr, lmr2, nmp, nnplan 중에서)", other)),
+                "qs" => o.qs = true,
+                "qs2" => {
+                    o.qs = true;
+                    o.qs2 = true;
+                }
+                other => return Err(format!("알 수 없는 탐색 옵션: {} (pvs, lmr, lmr2, nmp, nnplan, qs, qs2 중에서)", other)),
             }
         }
         Ok(o)
@@ -204,6 +214,11 @@ impl std::fmt::Display for SearchOptions {
         }
         if self.nmp {
             parts.push("nmp");
+        }
+        if self.qs2 {
+            parts.push("qs2");
+        } else if self.qs {
+            parts.push("qs");
         }
         if self.nnplan {
             parts.push("nnplan");
@@ -654,6 +669,98 @@ impl SliderAi {
         chosen
     }
 
+    /// 위협 정리 탐색. me 차례이고, me 는 바로 이길 수 없다고 가정한다 (호출하는 쪽에서 확인).
+    /// list[..n] 은 me 의 수, reach_me 는 me 가 걸어갈 수 있는 칸 (평가에 그대로 쓴다).
+    #[allow(clippy::too_many_arguments)]
+    fn qsearch_known(&mut self, tiles: u64, me: u64, opp: u64, mut alpha: i32, beta: i32, ply: usize, qply: i32, reach_me: u64, list: &[i32], n: usize) -> i32 {
+        const QS_MAX: i32 = 8;
+        self.nodes += 1;
+        if self.nodes & 1023 == 0
+            && self.may_abort
+            && (Instant::now() > self.deadline || self.stop.as_ref().map_or(false, |s| s.load(Ordering::Relaxed)))
+        {
+            self.aborted = true;
+        }
+        if self.aborted {
+            return 0;
+        }
+        let threatened = self.can_win(tiles, opp, me);
+        if !threatened {
+            // 조용한 국면: 평가로 멈출 수 있다 (stand pat)
+            let stand = self.evaluate(tiles, me, opp, reach_me, list, n);
+            if stand >= beta || !self.opts.qs2 || qply >= QS_MAX || ply >= MAX_PLY - 3 {
+                return stand;
+            }
+            alpha = alpha.max(stand);
+            let mut best = stand;
+            // 내가 위협을 만드는 수만 더 둬 본다 (상대에게 바로 이기는 수를 주지 않는 것만)
+            for i in 0..n {
+                let m = list[i];
+                let (nt, np) = (bb::apply(tiles, m), bb::apply_pieces(me, m));
+                if !self.can_win(nt, np, opp) || self.can_win(nt, opp, np) {
+                    continue;
+                }
+                let v = -self.qsearch_child(nt, opp, np, -beta, -alpha, ply + 1, qply + 1);
+                if self.aborted {
+                    return 0;
+                }
+                if v > best {
+                    best = v;
+                }
+                if v > alpha {
+                    alpha = v;
+                }
+                if alpha >= beta {
+                    break;
+                }
+            }
+            return best;
+        }
+        if n == 0 {
+            // 둘 수 있는 수가 없어 차례를 넘기면 상대가 이긴다
+            return -(WIN - (ply as i32 + 1));
+        }
+        if qply >= QS_MAX || ply >= MAX_PLY - 3 {
+            return self.evaluate(tiles, me, opp, reach_me, list, n);
+        }
+        // 위협을 받는 중: 막는 수만 둬 본다 (막는 수가 없으면 진다)
+        let mut best = -(WIN - (ply as i32 + 1));
+        for i in 0..n {
+            let m = list[i];
+            let (nt, np) = (bb::apply(tiles, m), bb::apply_pieces(me, m));
+            if self.can_win(nt, opp, np) {
+                continue;
+            }
+            let v = -self.qsearch_child(nt, opp, np, -beta, -alpha, ply + 1, qply + 1);
+            if self.aborted {
+                return 0;
+            }
+            if v > best {
+                best = v;
+            }
+            if v > alpha {
+                alpha = v;
+            }
+            if alpha >= beta {
+                break;
+            }
+        }
+        best
+    }
+
+    /// 위협 정리 탐색의 다음 국면 (me 차례, me 는 바로 이길 수 없다고 이미 확인함).
+    fn qsearch_child(&mut self, tiles: u64, me: u64, opp: u64, alpha: i32, beta: i32, ply: usize, qply: i32) -> i32 {
+        let mut list = std::mem::take(&mut self.moves[ply]);
+        let (n, reach_me) = bb::generate(tiles, me, opp, &mut list);
+        let v = if list[..n].iter().any(|&m| bb::dest(m) == GOAL) {
+            WIN - ply as i32
+        } else {
+            self.qsearch_known(tiles, me, opp, alpha, beta, ply, qply, reach_me, &list, n)
+        };
+        self.moves[ply] = list;
+        v
+    }
+
     fn can_win(&mut self, tiles: u64, me: u64, opp: u64) -> bool {
         let (n, _) = bb::generate(tiles, me, opp, &mut self.scratch);
         self.scratch[..n].iter().any(|&m| bb::dest(m) == GOAL)
@@ -742,6 +849,9 @@ impl SliderAi {
             }
         }
         if depth <= 0 || ply >= MAX_PLY - 1 {
+            if self.opts.qs && !optimistic && ply < MAX_PLY - 2 {
+                return self.qsearch_known(tiles, me, opp, alpha, beta, ply, 0, reach_me, list, n);
+            }
             return self.evaluate(tiles, me, opp, reach_me, list, n);
         }
         if optimistic && (ply & 1) == 1 && !self.can_win(tiles, opp, me) {

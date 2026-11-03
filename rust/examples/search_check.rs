@@ -61,7 +61,7 @@ fn main() {
     let base = run(SearchOptions::default());
     let base_nodes: u64 = base.iter().map(|r| r.2).sum();
     println!("기본: 깊이 {}, 국면 {}개, 노드 {}", depth, pos.len(), base_nodes);
-    for name in ["pvs", "lmr", "nmp", "pvs,lmr", "pvs,lmr,nmp"] {
+    for name in ["pvs", "lmr", "nmp", "pvs,lmr", "pvs,lmr,nmp", "qs", "qs2", "lmr2,qs", "lmr2,qs2"] {
         let o = SearchOptions::parse(name).unwrap();
         let r = run(o);
         let same_score = r.iter().zip(&base).filter(|(x, y)| x.1 == y.1).count();
