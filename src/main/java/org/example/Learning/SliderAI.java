@@ -1,7 +1,10 @@
 package org.example.Learning;
 
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * 반복 심화(iterative deepening) + 알파베타 가지치기 negamax 탐색 AI.
@@ -105,14 +108,37 @@ public class SliderAI {
     private final int[] weights;
     private final int[] feature = new int[EvalWeights.COUNT];
 
-    private final long[] ttTiles = new long[TT_SIZE];
-    private final long[] ttMe = new long[TT_SIZE];
-    private final long[] ttOpp = new long[TT_SIZE];
-    private final int[] ttScore = new int[TT_SIZE];
-    private final int[] ttMove = new int[TT_SIZE];
-    private final byte[] ttDepth = new byte[TT_SIZE];
-    private final byte[] ttFlag = new byte[TT_SIZE];
-    private final byte[] ttMode = new byte[TT_SIZE];
+    /**
+     * 트랜스포지션 테이블. 병렬 탐색 때 스레드끼리 공유한다 (잠금 없음).
+     * 칸마다 검사값(나머지 값들의 XOR)을 마지막에 써서, 여러 스레드가 동시에 써서 섞인 칸은 빈 칸으로 본다.
+     */
+    private static final class Tt {
+        final long[] tiles = new long[TT_SIZE];
+        final long[] me = new long[TT_SIZE];
+        final long[] opp = new long[TT_SIZE];
+        final int[] score = new int[TT_SIZE];
+        final int[] move = new int[TT_SIZE];
+        final byte[] depth = new byte[TT_SIZE];
+        final byte[] flag = new byte[TT_SIZE];
+        final byte[] mode = new byte[TT_SIZE];
+        final long[] check = new long[TT_SIZE];
+
+        static long sum(long t, long m, long o, int s, int mv, byte d, byte f, byte md) {
+            return t ^ m ^ o ^ (((long) s << 32) | (mv & 0xFFFFFFFFL)) ^ ((d & 0xFF) | (f & 0xFF) << 8 | (md & 0xFF) << 16);
+        }
+    }
+
+    private final Tt tt;
+    // 탐색 개선 (Rust 엔진에서 시간 제한 대국으로 확인한 것): LMR = 뒤쪽 조용한 수를 얕게 먼저 탐색
+    private boolean lmr;
+    // 더 센 LMR: 깊이 5 이상에서 7번째 이후 수는 2단계 줄인다
+    private boolean lmr2;
+    // 한 수를 탐색하는 스레드 수 (Lazy SMP). 1 이면 예전과 똑같이 한 스레드로 탐색한다
+    private int threads = 1;
+    // 0 = 주 스레드, 1.. = 도우미 스레드
+    private int helperId;
+    // 주 스레드가 끝나면 도우미를 멈추는 신호
+    private AtomicBoolean stop;
 
     private final int[][] moves = new int[MAX_PLY][BitBoard.MAX_MOVES];
     private final int[][] keys = new int[MAX_PLY][BitBoard.MAX_MOVES];
@@ -139,9 +165,37 @@ public class SliderAI {
     }
 
     public SliderAI(long timeLimitMs, int maxDepth, EvalWeights weights) {
+        this(timeLimitMs, maxDepth, weights.toArray(), new Tt());
+    }
+
+    private SliderAI(long timeLimitMs, int maxDepth, int[] weights, Tt tt) {
         this.timeLimitMs = timeLimitMs;
         this.maxDepth = Math.min(maxDepth, MAX_PLY - 2);
-        this.weights = weights.toArray();
+        this.weights = weights;
+        this.tt = tt;
+    }
+
+    /** 탐색 개선 선택지. 둘 다 false 면 예전과 같은 탐색 (lmr2 를 켜면 lmr 도 켜진다). */
+    public void setOptions(boolean lmr, boolean lmr2) {
+        this.lmr = lmr || lmr2;
+        this.lmr2 = lmr2;
+    }
+
+    /** 한 수를 탐색할 때 쓸 스레드 수 (기본 1). 2 이상이면 전치표를 공유하는 병렬 탐색(Lazy SMP)을 한다. */
+    public void setThreads(int threads) {
+        this.threads = Math.max(1, threads);
+    }
+
+    private SliderAI helper(int id, AtomicBoolean stopSignal) {
+        SliderAI a = new SliderAI(timeLimitMs, maxDepth, weights, tt);
+        a.lmr = lmr;
+        a.lmr2 = lmr2;
+        a.gameHistory = gameHistory;
+        a.optPly = optPly;
+        a.path[0] = path[0];
+        a.helperId = id;
+        a.stop = stopSignal;
+        return a;
     }
 
     /**
@@ -247,8 +301,37 @@ public class SliderAI {
         return new Result(move, best, depth, nodes);
     }
 
-    /** 반복 심화로 rootMoves 를 탐색하고 마지막으로 끝낸 깊이의 점수 순서로 정렬한다. 끝낸 깊이를 돌려준다. */
+    /**
+     * 반복 심화로 rootMoves 를 탐색하고 마지막으로 끝낸 깊이의 점수 순서로 정렬한다. 끝낸 깊이를 돌려준다.
+     * 스레드가 2개 이상이면 도우미들이 같은 전치표를 채우며 함께 탐색하고, 결과는 주 스레드의 것을 쓴다.
+     */
     private int iterate(long tiles, long me, long opp, int[] rootMoves, int[] scores, long until) {
+        if (threads <= 1) {
+            return iterateInner(tiles, me, opp, rootMoves, scores, until);
+        }
+        AtomicBoolean stopSignal = new AtomicBoolean(false);
+        List<Thread> workers = new ArrayList<>();
+        for (int id = 1; id < threads; id++) {
+            SliderAI h = helper(id, stopSignal);
+            int[] moves = rootMoves.clone();
+            Thread t = new Thread(() -> h.iterateInner(tiles, me, opp, moves, new int[moves.length], until));
+            t.setDaemon(true);
+            t.start();
+            workers.add(t);
+        }
+        int depth = iterateInner(tiles, me, opp, rootMoves, scores, until);
+        stopSignal.set(true);
+        for (Thread t : workers) {
+            try {
+                t.join();
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        }
+        return depth;
+    }
+
+    private int iterateInner(long tiles, long me, long opp, int[] rootMoves, int[] scores, long until) {
         deadline = until;
         aborted = false;
         int n = rootMoves.length;
@@ -256,6 +339,13 @@ public class SliderAI {
         int[] workScores = new int[n];
         int done = 0;
         for (int depth = 1; depth <= maxDepth; depth++) {
+            // 도우미는 깊이를 하나씩 건너뛰어 주 스레드보다 앞서 깊은 곳의 전치표를 채운다
+            if (helperId > 0 && depth > 1 && (depth + helperId) % 2 == 0) {
+                continue;
+            }
+            if (stop != null && stop.get()) {
+                break;
+            }
             for (int i = 0; i < history.length; i++) {
                 history[i] >>= 1;
             }
@@ -328,7 +418,7 @@ public class SliderAI {
     }
 
     private int negamax(long tiles, long me, long opp, int depth, int alpha, int beta, int ply) {
-        if ((++nodes & 1023) == 0 && mayAbort && System.currentTimeMillis() > deadline) {
+        if ((++nodes & 1023) == 0 && mayAbort && (System.currentTimeMillis() > deadline || (stop != null && stop.get()))) {
             aborted = true;
         }
         if (aborted) {
@@ -353,11 +443,15 @@ public class SliderAI {
         int mode = optimistic ? 1 + (ply & 1) : optPly == NO_PLAN ? 0 : 3 + optPly - ply;
         int idx = index(hash, mode);
         int ttBest = -1;
-        if (ttMe[idx] == me && ttOpp[idx] == opp && ttTiles[idx] == tiles && ttMode[idx] == mode) {
-            ttBest = ttMove[idx];
-            if (ttDepth[idx] >= depth) {
-                int s = fromTT(ttScore[idx], ply);
-                byte flag = ttFlag[idx];
+        long eTiles = tt.tiles[idx], eMe = tt.me[idx], eOpp = tt.opp[idx];
+        int eScore = tt.score[idx], eMove = tt.move[idx];
+        byte eDepth = tt.depth[idx], eFlag = tt.flag[idx], eMode = tt.mode[idx];
+        if (eMe == me && eOpp == opp && eTiles == tiles && eMode == mode
+                && tt.check[idx] == Tt.sum(eTiles, eMe, eOpp, eScore, eMove, eDepth, eFlag, eMode)) {
+            ttBest = eMove;
+            if (eDepth >= depth) {
+                int s = fromTT(eScore, ply);
+                byte flag = eFlag;
                 if (flag == EXACT || (flag == LOWER && s >= beta) || (flag == UPPER && s <= alpha)) {
                     return s;
                 }
@@ -405,7 +499,22 @@ public class SliderAI {
         for (int i = 0; i < n; i++) {
             pickNext(list, key, i, n);
             int m = list[i];
-            int s = -negamax(BitBoard.apply(tiles, m), opp, BitBoard.applyPieces(me, m), depth - 1, -beta, -alpha, ply + 1);
+            long nt = BitBoard.apply(tiles, m);
+            long np = BitBoard.applyPieces(me, m);
+            int s;
+            // LMR: 정렬에서 뒤쪽인 조용한 수(TT 최선수/킬러가 아닌 4번째 이후)는 얕게 먼저 보고, 좋아 보일 때만 제대로 다시 탐색한다
+            int reduce = 0;
+            if (lmr && !optimistic && i >= 3 && depth >= 3 && key[i] < (1 << 28)) {
+                reduce = lmr2 && depth >= 5 && i >= 6 ? 2 : 1;
+            }
+            if (reduce > 0) {
+                s = -negamax(nt, opp, np, depth - 1 - reduce, -alpha - 1, -alpha, ply + 1);
+                if (!aborted && s > alpha) {
+                    s = -negamax(nt, opp, np, depth - 1, -beta, -alpha, ply + 1);
+                }
+            } else {
+                s = -negamax(nt, opp, np, depth - 1, -beta, -alpha, ply + 1);
+            }
             if (aborted) {
                 return 0;
             }
@@ -426,14 +535,17 @@ public class SliderAI {
             }
         }
 
-        ttTiles[idx] = tiles;
-        ttMe[idx] = me;
-        ttOpp[idx] = opp;
-        ttMode[idx] = (byte) mode;
-        ttScore[idx] = toTT(best, ply);
-        ttMove[idx] = bestMove;
-        ttDepth[idx] = (byte) depth;
-        ttFlag[idx] = best <= origAlpha ? UPPER : best >= beta ? LOWER : EXACT;
+        int sScore = toTT(best, ply);
+        byte sDepth = (byte) depth, sFlag = best <= origAlpha ? UPPER : best >= beta ? LOWER : EXACT, sMode = (byte) mode;
+        tt.tiles[idx] = tiles;
+        tt.me[idx] = me;
+        tt.opp[idx] = opp;
+        tt.mode[idx] = sMode;
+        tt.score[idx] = sScore;
+        tt.move[idx] = bestMove;
+        tt.depth[idx] = sDepth;
+        tt.flag[idx] = sFlag;
+        tt.check[idx] = Tt.sum(tiles, me, opp, sScore, bestMove, sDepth, sFlag, sMode);
         return best;
     }
 

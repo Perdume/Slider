@@ -32,7 +32,10 @@ mvn test
 
 ## AI
 
-AI는 한 수에 약 1.5초 동안 알파베타 탐색을 합니다. 구조, 평가 함수, 성능 측정 결과, 다음 계획은
+AI는 한 수에 약 1.5초 동안 알파베타 탐색을 합니다.
+기본으로 **병렬 탐색**(컴퓨터의 코어를 모두 써서 한 수를 함께 탐색, Lazy SMP)과 **LMR**(뒤쪽 수를 얕게 먼저 보는 가지치기)을 씁니다.
+Rust 엔진으로 시간 제한 대국을 SPRT 로 검증한 개선입니다 (병렬 탐색 4스레드 Elo +100, 더 센 LMR 약 Elo +57).
+끄거나 바꾸려면: `java -Dslider.threads=1 -Dslider.search=none -cp target/classes org.example.Main` (`slider.search` 는 `none`, `lmr`, `lmr2`). 구조, 평가 함수, 성능 측정 결과, 다음 계획은
 [docs/AI.md](docs/AI.md)에 정리되어 있습니다.
 
 ### 학습 (Colab)

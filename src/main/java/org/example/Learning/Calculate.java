@@ -54,6 +54,11 @@ public class Calculate {
     public List<String> findsolve() {
         SliderAI ai = new SliderAI(timeLimitMs, MAX_DEPTH, EvalWeights.configured());
         ai.setGameHistory(gameHistory);
+        // 시간 제한 대국으로 확인한 개선을 켠다 (Rust 엔진 SPRT: 더 센 LMR 약 Elo +57, 병렬 탐색 4스레드 Elo +100).
+        // -Dslider.search=none|lmr|lmr2, -Dslider.threads=N 으로 바꿀 수 있다
+        String search = System.getProperty("slider.search", "lmr2");
+        ai.setOptions(search.equals("lmr") || search.equals("lmr2"), search.equals("lmr2"));
+        ai.setThreads(Integer.getInteger("slider.threads", Runtime.getRuntime().availableProcessors()));
         result = ai.search(tiles, aiPieces, playerPieces);
         if (result.move < 0) {
             return new ArrayList<>();
