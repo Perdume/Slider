@@ -6,6 +6,7 @@
 //! 옵션: --net-a --net-b 쪽별 신경망 파일 (없으면 선형 평가만)
 //!       --opts-a --opts-b 쪽별 탐색 개선 선택지 (쉼표 목록: pvs,lmr,lmr2,nmp. 기본은 모두 끔)
 //!       --time-ms-a --time-ms-b 쪽별 수당 시간 (없으면 --time-ms)
+//!       --tune-a --tune-b 쪽별 탐색 상수 (예: margin=40,trap=60,plan_ply=5,lmr_depth=3,lmr_index=3,lmr2_depth=5,lmr2_index=6)
 //!       --search-threads-a --search-threads-b 쪽별로 한 수를 탐색하는 스레드 수 (병렬 탐색, 기본 1).
 //!           --threads(동시에 두는 판 수) x 탐색 스레드 수가 코어 수를 넘지 않게 하세요
 //!       --stop-file 경로 / --parent-pid N  멈춤 신호 (멈추면 RESULT 줄 없이 끝난다)
@@ -18,7 +19,7 @@ use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
-use slider::ai::SearchOptions;
+use slider::ai::{SearchOptions, Tunables};
 use slider::arena::{self, Config, Player};
 use slider::cli;
 use slider::nnue::Network;
@@ -53,6 +54,11 @@ fn run() -> Result<(), String> {
         }
     };
     let (time_a, time_b) = (side_time("time-ms-a")?, side_time("time-ms-b")?);
+    let tune_a = Tunables::parse(opt.get("tune-a").map(String::as_str).unwrap_or(""))?;
+    let tune_b = Tunables::parse(opt.get("tune-b").map(String::as_str).unwrap_or(""))?;
+    if tune_a != Tunables::default() || tune_b != Tunables::default() {
+        println!("탐색 상수: A {:?}\n          B {:?}", tune_a, tune_b);
+    }
     let (st_a, st_b): (usize, usize) = (cli::get(&opt, "search-threads-a", 1)?, cli::get(&opt, "search-threads-b", 1)?);
     if st_a > 1 || st_b > 1 {
         println!("탐색 스레드: A {} / B {}", st_a, st_b);
@@ -101,8 +107,8 @@ fn run() -> Result<(), String> {
     if opts_a != SearchOptions::default() || opts_b != SearchOptions::default() {
         println!("탐색: A {} / B {}", opts_a, opts_b);
     }
-    let pa = Player::new(a.clone(), net_a).with_options(opts_a).with_time(time_a).with_search_threads(st_a);
-    let pb = Player::new(b.clone(), net_b).with_options(opts_b).with_time(time_b).with_search_threads(st_b);
+    let pa = Player::new(a.clone(), net_a).with_options(opts_a).with_time(time_a).with_search_threads(st_a).with_tunables(tune_a);
+    let pb = Player::new(b.clone(), net_b).with_options(opts_b).with_time(time_b).with_search_threads(st_b).with_tunables(tune_b);
     let ab = [pa.clone(), pb.clone()];
     let ba = [pb, pa];
 

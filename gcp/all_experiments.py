@@ -55,6 +55,11 @@ SETTINGS = {
     "RUN_SMP": env("RUN_SMP", True),
     "RUN_BIG_NN": env("RUN_BIG_NN", True),
     "BIG_HIDDEN": env("BIG_HIDDEN", 128),
+    "RUN_STACK": env("RUN_STACK", True),
+    "RUN_SPSA": env("RUN_SPSA", True),
+    "SPSA_ITERS": env("SPSA_ITERS", 200),
+    "SPSA_GAMES": env("SPSA_GAMES", 64),
+    "SPSA_LR": env("SPSA_LR", 1.5),
 }
 S = SETTINGS
 THREADS = os.cpu_count() or 2
@@ -241,9 +246,63 @@ if S["RUN_BIG_NN"]:
     sprt(f"nn{h}_time", ["--a", W, "--net-a", big_net], ["--b", W], note=f"신경망 은닉 {h}, 수당 {S['MATCH_TIME_MS']}ms",
          bin_dir=big_bin)
 
+# ---------------------------------------------------------------- F. 개선 합치기 확인 + 탐색 상수 자동 튜닝(SPSA)
+if S["RUN_STACK"]:
+    gt = max(1, THREADS // 4)
+    sprt("stack_lmr2_smp4_30ms", ["--a", W, "--opts-a", "lmr2", "--search-threads-a", 4], ["--b", W],
+         note="lmr2 + 4스레드 vs 기본 (30ms)", game_threads=gt, max_games=400)
+    sprt("stack_lmr2_smp4_150ms", ["--a", W, "--opts-a", "lmr2", "--search-threads-a", 4], ["--b", W], limit=["--time-ms", 150],
+         note="lmr2 + 4스레드 vs 기본 (150ms)", game_threads=gt, max_games=300)
+
+# 이름, 시작값, 흔드는 폭 c, 최소, 최대 (기본값 = 예전 고정 상수)
+SPSA_PARAMS = [("margin", 40, 8, 10, 120), ("trap", 60, 12, 0, 200), ("plan_ply", 5, 1, 3, 9),
+               ("lmr_depth", 3, 1, 2, 6), ("lmr_index", 3, 1, 1, 8), ("lmr2_depth", 5, 1, 3, 8), ("lmr2_index", 6, 1, 3, 12)]
+
+
+def tune_str(theta):
+    return ",".join(f"{n}={int(round(min(hi, max(lo, v))))}" for (n, _, _, lo, hi), v in zip(SPSA_PARAMS, theta))
+
+
+if S["RUN_SPSA"]:
+    # SPSA: 상수를 한꺼번에 +c / -c 방향(무작위 부호)으로 흔든 두 엔진을 맞붙여, 이긴 쪽으로 조금씩 옮긴다 (Stockfish 가 상수를 맞추는 방식)
+    sp = state.get("spsa", {"iter": 0, "theta": [float(p[1]) for p in SPSA_PARAMS], "log": []})
+    c = np.array([p[2] for p in SPSA_PARAMS], float)
+    lo = np.array([p[3] for p in SPSA_PARAMS], float)
+    hi = np.array([p[4] for p in SPSA_PARAMS], float)
+    while sp["iter"] < S["SPSA_ITERS"]:
+        k = sp["iter"]
+        rng = np.random.default_rng(S["SEED"] * 1_000_003 + k)
+        delta = rng.choice([-1.0, 1.0], size=len(SPSA_PARAMS))
+        theta = np.array(sp["theta"], float)
+        plus, minus = np.clip(theta + c * delta, lo, hi), np.clip(theta - c * delta, lo, hi)
+        cmd = [BIN / "matchup", "--a", W, "--opts-a", "lmr2", "--tune-a", tune_str(plus), "--b", W, "--opts-b", "lmr2",
+               "--tune-b", tune_str(minus), "--games", S["SPSA_GAMES"], "--time-ms", S["MATCH_TIME_MS"],
+               "--max-plies", S["MAX_PLIES"], "--threads", THREADS, "--seed", 50_000 + k]
+        out = subprocess.run(list(map(str, cmd)), capture_output=True, text=True, check=True).stdout
+        r = json.loads([l for l in out.splitlines() if l.startswith("RESULT ")][-1][len("RESULT "):])
+        net = (r["aWins"] - r["bWins"]) / r["games"]
+        theta = np.clip(theta + S["SPSA_LR"] * c * net * delta, lo, hi)
+        sp["theta"], sp["iter"] = theta.tolist(), k + 1
+        sp["log"].append([k + 1, round(net, 3), tune_str(theta)])
+        state["spsa"] = sp
+        save_state()
+        if (k + 1) % 10 == 0:
+            log(f"[SPSA {k + 1}/{S['SPSA_ITERS']}] {tune_str(theta)}")
+    final = tune_str(sp["theta"])
+    state["spsa_result"] = {"note": "SPSA 결과 " + final}
+    save_state()
+    log("SPSA 결과:", final)
+    sprt("spsa_30ms", ["--a", W, "--opts-a", "lmr2", "--tune-a", final], ["--b", W, "--opts-b", "lmr2"],
+         note="SPSA 상수 vs 기본 상수 (lmr2, 30ms)")
+    sprt("spsa_150ms", ["--a", W, "--opts-a", "lmr2", "--tune-a", final], ["--b", W, "--opts-b", "lmr2"], limit=["--time-ms", 150],
+         note="SPSA 상수 vs 기본 상수 (lmr2, 150ms)", max_games=400)
+
 # ---------------------------------------------------------------- 요약
 lines = [f"설정: {SETTINGS} | threads {THREADS} | 이번 실행 {time.time() - t_start:.0f}초"]
 for key, r in state.items():
+    if key == "spsa":
+        lines.append(f"{key:<22} 반복 {r['iter']}회, 현재 {tune_str(r['theta'])}")
+        continue
     lines.append(f"{key:<22} {r.get('note', '')[:60]:<40} {fmt(r)}")
 text = "\n".join(lines)
 (OUT / "summary.txt").write_text(text + "\n\nJSON:\n" + json.dumps(state, ensure_ascii=False, indent=1), encoding="utf-8")

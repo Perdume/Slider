@@ -199,8 +199,54 @@ impl std::fmt::Display for SearchOptions {
     }
 }
 
+/// 탐색 상수 (자동 튜닝 대상). 기본값은 예전 고정 상수와 같다.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Tunables {
+    /// 최선수와 이 점수 차이 이내면 안전한 수
+    pub margin: i32,
+    /// 함정(상대 응수 중 내가 바로 이기게 되는 비율) 보너스
+    pub trap: i32,
+    /// 이 ply 부터 상대는 직접적인 위협이 없으면 수를 쉰다고 가정 (공격 계획 탐색)
+    pub plan_ply: i32,
+    /// LMR: 이 깊이 이상, 이 순서 이상인 조용한 수를 1단계 줄임
+    pub lmr_depth: i32,
+    pub lmr_index: i32,
+    /// lmr2: 이 깊이 이상, 이 순서 이상이면 2단계 줄임
+    pub lmr2_depth: i32,
+    pub lmr2_index: i32,
+}
+
+impl Default for Tunables {
+    fn default() -> Self {
+        Tunables { margin: MARGIN, trap: TRAP_WEIGHT, plan_ply: PLAN_PLY, lmr_depth: 3, lmr_index: 3, lmr2_depth: 5, lmr2_index: 6 }
+    }
+}
+
+impl Tunables {
+    /// "margin=40,trap=60,plan_ply=5,lmr_depth=3,lmr_index=3,lmr2_depth=5,lmr2_index=6" (일부만 줘도 됨)
+    pub fn parse(text: &str) -> Result<Self, String> {
+        let mut t = Tunables::default();
+        for part in text.split(',').map(str::trim).filter(|p| !p.is_empty()) {
+            let (k, v) = part.split_once('=').ok_or_else(|| format!("이름=값 형식이 아닙니다: {}", part))?;
+            let v: i32 = v.trim().parse().map_err(|_| format!("숫자가 아닙니다: {}", part))?;
+            match k.trim() {
+                "margin" => t.margin = v,
+                "trap" => t.trap = v,
+                "plan_ply" => t.plan_ply = v.max(1),
+                "lmr_depth" => t.lmr_depth = v,
+                "lmr_index" => t.lmr_index = v.max(1),
+                "lmr2_depth" => t.lmr2_depth = v,
+                "lmr2_index" => t.lmr2_index = v.max(1),
+                other => return Err(format!("알 수 없는 탐색 상수: {}", other)),
+            }
+        }
+        Ok(t)
+    }
+}
+
 pub struct SliderAi {
     time_limit_ms: u64,
+    tune: Tunables,
     opts: SearchOptions,
     max_depth: i32,
     weights: [i32; weights::COUNT],
@@ -319,6 +365,7 @@ impl SliderAi {
     fn build(time_limit_ms: u64, max_depth: i32, weights: [i32; weights::COUNT], tt: Arc<SharedTt>) -> Self {
         SliderAi {
             time_limit_ms,
+            tune: Tunables::default(),
             opts: SearchOptions::default(),
             max_depth: max_depth.min(MAX_PLY as i32 - 2),
             weights,
@@ -354,12 +401,18 @@ impl SliderAi {
         let mut a = SliderAi::build(self.time_limit_ms, self.max_depth, self.weights, self.tt.clone());
         a.net = self.net.clone();
         a.opts = self.opts;
+        a.tune = self.tune;
         a.game_history = self.game_history.clone();
         a.opt_ply = self.opt_ply;
         a.path[0] = self.path[0];
         a.helper_id = id;
         a.stop = Some(stop);
         a
+    }
+
+    /// 탐색 상수 (기본은 예전 고정값).
+    pub fn set_tunables(&mut self, tune: Tunables) {
+        self.tune = tune;
     }
 
     /// 탐색 개선 선택지 (기본은 모두 끔).
@@ -417,14 +470,14 @@ impl SliderAi {
         }
         let best = scores[0];
         let mut safe = 0;
-        while safe < n && scores[safe] > best - MARGIN {
+        while safe < n && scores[safe] > best - self.tune.margin {
             safe += 1;
         }
         let mut mv = root[0];
         if best.abs() < WIN_BOUND && safe > 1 {
             let mut plan_moves = root[..safe].to_vec();
             let mut plan_scores = vec![0i32; safe];
-            self.opt_ply = PLAN_PLY;
+            self.opt_ply = self.tune.plan_ply;
             let saved_depth = self.max_depth;
             if self.opts.nnplan && self.net.is_some() {
                 self.max_depth = self.max_depth.min(NN_PLAN_DEPTH);
@@ -485,7 +538,7 @@ impl SliderAi {
             while i < n && !self.aborted {
                 let m = work[i];
                 // 최선수와 MARGIN 이내인 수는 정확한 점수를 얻도록 창을 넓힌다
-                let floor = if best == -INF { -INF } else { best - MARGIN };
+                let floor = if best == -INF { -INF } else { best - self.tune.margin };
                 work_scores[i] =
                     -self.negamax(bb::apply(tiles, m), opp, bb::apply_pieces(me, m), depth - 1, -INF, -floor, 1);
                 best = best.max(work_scores[i]);
@@ -516,7 +569,7 @@ impl SliderAi {
         let mut chosen = root_moves[0];
         let mut chosen_key = f64::NEG_INFINITY;
         let mut i = 0;
-        while i < root_moves.len() && scores[i] > best_score - MARGIN {
+        while i < root_moves.len() && scores[i] > best_score - self.tune.margin {
             let m = root_moves[i];
             let after = bb::apply(tiles, m);
             let my_after = bb::apply_pieces(me, m);
@@ -528,7 +581,7 @@ impl SliderAi {
                     traps += 1;
                 }
             }
-            let key = scores[i] as f64 + if n == 0 { 0.0 } else { TRAP_WEIGHT as f64 * traps as f64 / n as f64 };
+            let key = scores[i] as f64 + if n == 0 { 0.0 } else { self.tune.trap as f64 * traps as f64 / n as f64 };
             if key > chosen_key {
                 chosen_key = key;
                 chosen = m;
@@ -721,8 +774,9 @@ impl SliderAi {
     fn search_later_move(&mut self, tiles: u64, me: u64, opp: u64, depth: i32, alpha: i32, beta: i32, ply: usize, index: usize, key: i32) -> i32 {
         // 여기서 me 는 수를 둔 뒤 둘 차례가 된 쪽 (상대), opp 는 방금 둔 쪽
         let quiet = key < (1 << 28); // TT 최선수/킬러가 아님
-        let reduce = if self.opts.lmr && depth >= 3 && index >= 3 && quiet {
-            if self.opts.lmr2 && depth >= 5 && index >= 6 { 2 } else { 1 }
+        let t = self.tune;
+        let reduce = if self.opts.lmr && depth >= t.lmr_depth && index as i32 >= t.lmr_index && quiet {
+            if self.opts.lmr2 && depth >= t.lmr2_depth && index as i32 >= t.lmr2_index { 2 } else { 1 }
         } else {
             0
         };

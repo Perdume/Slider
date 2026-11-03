@@ -5,7 +5,7 @@
 
 use std::sync::Arc;
 
-use crate::ai::{position_hash, History, SearchOptions, SliderAi};
+use crate::ai::{position_hash, History, SearchOptions, SliderAi, Tunables};
 use crate::bitboard::{self as bb, GOAL, MAX_MOVES};
 use crate::javarandom::JavaRandom;
 use crate::nnue::Network;
@@ -33,15 +33,21 @@ pub struct Player {
     pub time_ms: Option<u64>,
     /// 한 수를 탐색할 때 쓰는 스레드 수 (병렬 탐색). 기본 1
     pub search_threads: usize,
+    pub tune: Tunables,
 }
 
 impl Player {
     pub fn new(weights: EvalWeights, net: Option<Arc<Network>>) -> Self {
-        Player { weights, net, opts: SearchOptions::default(), time_ms: None, search_threads: 1 }
+        Player { weights, net, opts: SearchOptions::default(), time_ms: None, search_threads: 1, tune: Tunables::default() }
     }
 
     pub fn with_options(mut self, opts: SearchOptions) -> Self {
         self.opts = opts;
+        self
+    }
+
+    pub fn with_tunables(mut self, tune: Tunables) -> Self {
+        self.tune = tune;
         self
     }
 
@@ -135,6 +141,7 @@ pub fn play(
                 engine.set_net(players[side].net.clone());
                 engine.set_options(players[side].opts);
                 engine.set_threads(players[side].search_threads);
+                engine.set_tunables(players[side].tune);
                 engine.set_game_history(counts.clone());
                 let result = engine.search(tiles, me, opp);
                 let mut chosen = result.mv;
