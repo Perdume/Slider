@@ -3,7 +3,7 @@
 Slider AI 학습을 사람이 안 보는 동안에도 계속 돌리기 위한 문서입니다. 이 레포를 처음 보는 사람이나 새 Claude 세션도
 이 문서만 읽고 상태를 확인하고, 이어서 돌리고, 멈출 수 있게 썼습니다.
 
-마지막 갱신: 2026-11-03 (새 규칙 = 대각선 배치, 말 하나씩 시계 방향)
+마지막 갱신: 2026-11-04 04:20 KST (새 규칙 = 대각선 배치, 말 하나씩 시계 방향). 지금 도는 VM 없음, 버킷만 남김 (Colab 이어하기용).
 
 ---
 
@@ -18,7 +18,7 @@ Slider AI 학습을 사람이 안 보는 동안에도 계속 돌리기 위한 �
 | 강화학습 (무료) | Colab `colab/slider_alphazero_conv.ipynb` | 노트북 출력 | Drive `slider_results/alphazero/` |
 
 - GCP 프로젝트: `eminent-glider-465204-b2` (결제 계정 `01D536-909123-E1B4FD`, 원화)
-- 지역: `us-central1` (GPU 는 `us-central1-a` 에서 잘 잡힘. 안 되면 b → f → c)
+- 지역: `us-central1` 기본. GPU 는 밤에 자리가 자주 없음 (Spot 회수 잦음, 일반 VM 도 ZONE_RESOURCE_POOL_EXHAUSTED) → `relaunch_rl.sh` 는 us-east1 / us-west1 도 시도
 - 할당량: CPU 전체 64개, GPU 1개 (둘 다 올려 둠)
 - 버킷: `gs://slider-rl-eminent-glider` (us-central1)
 
