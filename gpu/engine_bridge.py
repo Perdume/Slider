@@ -80,15 +80,28 @@ def policy_accuracy(params, obs, act, n=20000, seed=0):
 
 
 class Engine:
-    """Rust bestmove 서버. moves([(tiles, me, opp), ...]) -> 엔진의 수 정수 목록 (-1 = 통과)."""
+    """Rust bestmove 서버. moves([(tiles, me, opp), ...]) -> 엔진의 수 정수 목록 (-1 = 통과).
+    서버가 죽었거나(셀을 중간에 멈춰서) 주고받기가 꼬였으면 새로 띄워서 다시 묻는다."""
 
-    def __init__(self, binary, time_ms=50, threads=None, search="lmr2", weights="tuned"):
-        args = [str(binary), "--time-ms", str(time_ms), "--search", search, "--weights", weights]
+    def __init__(self, binary, time_ms=50, threads=None, search="lmr2", weights="tuned", err_path="/tmp/bestmove_err.txt"):
+        self.args = [str(binary), "--time-ms", str(time_ms), "--search", search, "--weights", weights]
         if threads:
-            args += ["--threads", str(threads)]
-        self.p = subprocess.Popen(args, stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True, bufsize=1)
+            self.args += ["--threads", str(threads)]
+        self.err_path = err_path
+        self.p = None
+        self.dirty = False
+        self._start()
 
-    def moves(self, positions):
+    def _start(self):
+        if self.p is not None and self.p.poll() is None:
+            self.p.kill()
+            self.p.wait()
+        self.err = open(self.err_path, "a")
+        self.p = subprocess.Popen(self.args, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=self.err, text=True, bufsize=1)
+        self.dirty = False
+
+    def _ask(self, positions):
+        self.dirty = True
         for t, m, o in positions:
             self.p.stdin.write(f"{t} {m} {o}\n")
         self.p.stdin.write("\n")
@@ -103,10 +116,25 @@ class Engine:
             out.append(int(line.split()[0]))
         if len(out) != len(positions):
             raise RuntimeError(f"답 개수가 다릅니다: {len(out)} / {len(positions)}")
+        self.dirty = False
         return out
 
+    def moves(self, positions):
+        if self.dirty or self.p.poll() is not None:
+            self._start()
+        try:
+            return self._ask(positions)
+        except (BrokenPipeError, RuntimeError, ValueError) as e:
+            try:
+                tail = open(self.err_path).read()[-500:]
+            except OSError:
+                tail = ""
+            print(f"(엔진 서버를 다시 띄웁니다: {e}) {tail}", flush=True)
+            self._start()
+            return self._ask(positions)
+
     def close(self):
-        if self.p.poll() is None:
+        if self.p is not None and self.p.poll() is None:
             self.p.stdin.close()
             self.p.wait(timeout=10)
 
