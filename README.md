@@ -19,6 +19,14 @@
 
 ## 실행
 
+기본 엔진은 Rust 입니다 (같은 규칙, Java 보다 빠름, 병렬 탐색 + LMR + 튜닝 가중치가 기본).
+
+```bash
+cd rust && cargo run --release --bin play            # 옵션: --time-ms 1500 --threads N --search lmr2|lmr|none
+```
+
+Java 판(예전 구현)도 그대로 실행할 수 있습니다.
+
 ```bash
 mvn compile
 java -cp target/classes org.example.Main
