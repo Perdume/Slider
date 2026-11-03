@@ -173,6 +173,18 @@ pub struct SearchOptions {
     pub qs: bool,
     /// qs + 위협이 없을 때 "내가 위협을 만드는 수" 도 둬 본다 (체스에서 잡는 수만 더 보는 것과 같음)
     pub qs2: bool,
+    /// 응수 수(countermove): 상대의 직전 수에 대해 예전에 잘랐던 수를 킬러 다음으로 먼저 본다
+    pub cm: bool,
+    /// 연속 히스토리: (상대 직전 수, 내 수) 쌍이 잘랐던 기록을 정렬 점수에 더한다
+    pub ch: bool,
+    /// 히스토리 감점: 자른 수보다 먼저 봤는데 못 자른 조용한 수는 히스토리 점수를 깎는다
+    pub hm: bool,
+    /// LMP: 얕은 깊이에서 정렬 뒤쪽의 조용한 수는 아예 보지 않는다 (위협받는 국면 제외)
+    pub lmp: bool,
+    /// futility: 말단 근처에서 지금 평가 + 여유가 alpha 에도 못 미치면 위협을 만들지 않는 수는 보지 않는다
+    pub fut: bool,
+    /// 위협 연장: 상대가 바로 이길 수 있는 국면(체스의 체크)은 한 수 더 깊게 본다
+    pub ext: bool,
 }
 
 impl SearchOptions {
@@ -190,11 +202,17 @@ impl SearchOptions {
                 "nmp" => o.nmp = true,
                 "nnplan" => o.nnplan = true,
                 "qs" => o.qs = true,
+                "cm" => o.cm = true,
+                "ch" => o.ch = true,
+                "hm" => o.hm = true,
+                "lmp" => o.lmp = true,
+                "fut" => o.fut = true,
+                "ext" => o.ext = true,
                 "qs2" => {
                     o.qs = true;
                     o.qs2 = true;
                 }
-                other => return Err(format!("알 수 없는 탐색 옵션: {} (pvs, lmr, lmr2, nmp, nnplan, qs, qs2 중에서)", other)),
+                other => return Err(format!("알 수 없는 탐색 옵션: {} (pvs, lmr, lmr2, nmp, nnplan, qs, qs2, cm, ch, hm, lmp, fut, ext 중에서)", other)),
             }
         }
         Ok(o)
@@ -223,6 +241,11 @@ impl std::fmt::Display for SearchOptions {
         if self.nnplan {
             parts.push("nnplan");
         }
+        for (on, name) in [(self.cm, "cm"), (self.ch, "ch"), (self.hm, "hm"), (self.lmp, "lmp"), (self.fut, "fut"), (self.ext, "ext")] {
+            if on {
+                parts.push(name);
+            }
+        }
         write!(f, "{}", if parts.is_empty() { "기본".to_string() } else { parts.join(",") })
     }
 }
@@ -250,11 +273,17 @@ pub struct Tunables {
     pub dyn_threshold: i32,
     /// 평가의 위치 점수 표: 0 = 가운데와 가까울수록 (예전), 1 = 골의 줄 위에 있는지, 2 = 없음
     pub pos_table: i32,
+    /// LMP: 이 깊이 이하에서 lmp_base + 깊이² 번째 이후 조용한 수는 보지 않는다
+    pub lmp_depth: i32,
+    pub lmp_base: i32,
+    /// futility: 이 깊이 이하에서 평가 + fut_margin × 깊이 <= alpha 이면 자른다
+    pub fut_depth: i32,
+    pub fut_margin: i32,
 }
 
 impl Default for Tunables {
     fn default() -> Self {
-        Tunables { margin: MARGIN, trap: TRAP_WEIGHT, plan_ply: PLAN_PLY, lmr_depth: 3, lmr_index: 3, lmr2_depth: 5, lmr2_index: 6, contempt: 0, dyn_contempt: 0, dyn_threshold: 100, pos_table: 0 }
+        Tunables { margin: MARGIN, trap: TRAP_WEIGHT, plan_ply: PLAN_PLY, lmr_depth: 3, lmr_index: 3, lmr2_depth: 5, lmr2_index: 6, contempt: 0, dyn_contempt: 0, dyn_threshold: 100, pos_table: 0, lmp_depth: 2, lmp_base: 4, fut_depth: 1, fut_margin: 150 }
     }
 }
 
@@ -286,6 +315,10 @@ impl Tunables {
                 "dyn_contempt" => t.dyn_contempt = v,
                 "dyn_threshold" => t.dyn_threshold = v.max(0),
                 "pos_table" => t.pos_table = v.clamp(0, 2),
+                "lmp_depth" => t.lmp_depth = v,
+                "lmp_base" => t.lmp_base = v.max(1),
+                "fut_depth" => t.fut_depth = v,
+                "fut_margin" => t.fut_margin = v.max(0),
                 other => return Err(format!("알 수 없는 탐색 상수: {}", other)),
             }
         }
@@ -318,6 +351,12 @@ pub struct SliderAi {
     keys: Vec<Vec<i32>>,
     killers: [[i32; 2]; MAX_PLY],
     history: [i32; 256],
+    /// 이 ply 에서 둔 수 (-1 = 차례 넘김). 응수/연속 히스토리에 쓴다
+    cur_move: [i32; MAX_PLY],
+    /// 상대 직전 수(& 255) -> 그걸 잘 받아친 수
+    counter: [i32; 256],
+    /// (상대 직전 수 & 255) * 256 + (내 수 & 255) -> 점수
+    cont: Vec<i32>,
     scratch: Vec<i32>,
     back_cost: [i32; 4],
     /// 지금 탐색 경로의 국면 해시 (반복 판정용)
@@ -431,6 +470,9 @@ impl SliderAi {
             keys: (0..MAX_PLY).map(|_| vec![0; MAX_MOVES]).collect(),
             killers: [[0; 2]; MAX_PLY],
             history: [0; 256],
+            cur_move: [-1; MAX_PLY],
+            counter: [-1; 256],
+            cont: vec![0; 256 * 256],
             scratch: vec![0; MAX_MOVES],
             back_cost: [0; 4],
             path: [0; MAX_PLY + 1],
@@ -597,6 +639,11 @@ impl SliderAi {
             for h in self.history.iter_mut() {
                 *h >>= 1;
             }
+            if self.opts.ch {
+                for h in self.cont.iter_mut() {
+                    *h >>= 1;
+                }
+            }
             // 깊이 1은 시간이 끝나도 끝까지 탐색해서 항상 결과가 있게 한다
             self.may_abort = depth > 1;
             let mut best = -INF;
@@ -605,6 +652,7 @@ impl SliderAi {
                 let m = work[i];
                 // 최선수와 MARGIN 이내인 수는 정확한 점수를 얻도록 창을 넓힌다
                 let floor = if best == -INF { -INF } else { best - self.tune.margin };
+                self.cur_move[0] = m;
                 work_scores[i] =
                     -self.negamax(bb::apply(tiles, m), opp, bb::apply_pieces(me, m), depth - 1, -INF, -floor, 1);
                 best = best.max(work_scores[i]);
@@ -848,6 +896,16 @@ impl SliderAi {
                 return (if optimistic { PLAN_WIN } else { WIN }) - ply as i32;
             }
         }
+        let t = self.tune;
+        // 상대가 바로 이길 수 있는가 (위협 연장 / LMP / futility 에서 쓸 때만 계산한다)
+        let need_threat = !optimistic
+            && ply < MAX_PLY - 1
+            && (self.opts.ext || (self.opts.lmp && depth >= 1 && depth <= t.lmp_depth) || (self.opts.fut && depth >= 1 && depth <= t.fut_depth));
+        let threatened = need_threat && self.can_win(tiles, opp, me);
+        let mut depth = depth;
+        if self.opts.ext && threatened && ply < MAX_PLY - 8 {
+            depth += 1;
+        }
         if depth <= 0 || ply >= MAX_PLY - 1 {
             if self.opts.qs && !optimistic && ply < MAX_PLY - 2 {
                 return self.qsearch_known(tiles, me, opp, alpha, beta, ply, 0, reach_me, list, n);
@@ -857,16 +915,19 @@ impl SliderAi {
         if optimistic && (ply & 1) == 1 && !self.can_win(tiles, opp, me) {
             // 깊은 곳에서 상대는 바로 이기거나 직접적인 위협을 막을 때만 움직인다고 가정한다.
             // 이렇게 해야 AI 가 여러 수에 걸친 공격 계획을 세운다.
+            self.cur_move[ply] = -1;
             return -self.negamax(tiles, opp, me, depth - 1, -beta, -alpha, ply + 1);
         }
         if n == 0 {
             // 둘 수 있는 수가 없으면 차례를 넘긴다
+            self.cur_move[ply] = -1;
             return -self.negamax(tiles, opp, me, depth - 1, -beta, -alpha, ply + 1);
         }
 
         // 널무브: 차례를 그냥 넘겨도 beta 이상이면 실제 수는 더 좋을 것으로 보고 자른다.
         // 상대가 바로 이길 수 있는 국면(넘기면 진다)과 승패 점수 근처에서는 쓰지 않는다.
         if self.opts.nmp && !optimistic && depth >= 3 && beta.abs() < WIN_BOUND && !self.can_win(tiles, opp, me) {
+            self.cur_move[ply] = -1;
             let v = -self.negamax(tiles, opp, me, depth - 1 - 2, -beta, -beta + 1, ply + 1);
             if self.aborted {
                 return 0;
@@ -876,6 +937,9 @@ impl SliderAi {
             }
         }
 
+        let prev = if ply >= 1 { self.cur_move[ply - 1] } else { -1 };
+        let counter = if self.opts.cm && prev >= 0 { self.counter[(prev & 255) as usize] } else { -1 };
+        let cont_base = if self.opts.ch && prev >= 0 { (prev & 255) as usize * 256 } else { usize::MAX };
         for i in 0..n {
             let m = list[i];
             key[i] = if m == tt_best {
@@ -884,10 +948,22 @@ impl SliderAi {
                 1 << 29
             } else if m == self.killers[ply][1] {
                 1 << 28
+            } else if m == counter {
+                1 << 27
             } else {
-                self.history[(m & 255) as usize] + POSITION[bb::dest(m)]
+                let c = if cont_base != usize::MAX { self.cont[cont_base + (m & 255) as usize] } else { 0 };
+                self.history[(m & 255) as usize] + POSITION[bb::dest(m)] + c
             };
         }
+
+        // futility: 말단 근처에서 지금 평가에 여유를 더해도 alpha 에 못 미치면 위협을 만들지 않는 수는 건너뛴다
+        let futile = self.opts.fut
+            && !optimistic
+            && !threatened
+            && depth <= t.fut_depth
+            && alpha.abs() < WIN_BOUND
+            && self.evaluate(tiles, me, opp, reach_me, list, n) + t.fut_margin * depth <= alpha;
+        let lmp = self.opts.lmp && !optimistic && !threatened && depth <= t.lmp_depth;
 
         let orig_alpha = alpha;
         let mut best = -INF;
@@ -895,7 +971,16 @@ impl SliderAi {
         for i in 0..n {
             pick_next(list, key, i, n);
             let m = list[i];
+            let late_quiet = i > 0 && key[i] < (1 << 27) && best > -WIN_BOUND;
+            if lmp && late_quiet && i as i32 >= t.lmp_base + depth * depth {
+                // 남은 수는 모두 정렬 점수가 더 낮은 조용한 수다
+                break;
+            }
             let (nt, np) = (bb::apply(tiles, m), bb::apply_pieces(me, m));
+            if futile && late_quiet && !self.can_win(nt, np, opp) {
+                continue;
+            }
+            self.cur_move[ply] = m;
             let s = if optimistic || i == 0 || !(self.opts.pvs || self.opts.lmr) {
                 -self.negamax(nt, opp, np, depth - 1, -beta, -alpha, ply + 1)
             } else {
@@ -918,6 +1003,23 @@ impl SliderAi {
                 }
                 let h = &mut self.history[(m & 255) as usize];
                 *h = (*h + depth * depth).min(1 << 20);
+                if self.opts.cm && prev >= 0 {
+                    self.counter[(prev & 255) as usize] = m;
+                }
+                if cont_base != usize::MAX {
+                    let c = &mut self.cont[cont_base + (m & 255) as usize];
+                    *c = (*c + depth * depth).min(1 << 20);
+                }
+                if self.opts.hm {
+                    // 먼저 봤지만 자르지 못한 수는 감점
+                    for j in 0..i {
+                        let q = (list[j] & 255) as usize;
+                        self.history[q] = (self.history[q] - depth * depth).max(-(1 << 20));
+                        if cont_base != usize::MAX {
+                            self.cont[cont_base + q] = (self.cont[cont_base + q] - depth * depth).max(-(1 << 20));
+                        }
+                    }
+                }
                 break;
             }
         }

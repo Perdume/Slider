@@ -1,12 +1,14 @@
 [
- {"key": "qs_30ms", "note": "위협 정리 탐색(qs) vs 게임 설정, 30ms",
-  "a": ["--a", "{W}", "--opts-a", "lmr2,qs", "--tune-a", "game"], "b": ["--b", "{W}", "--opts-b", "lmr2", "--tune-b", "game"], "time_ms": 30},
- {"key": "qs_150ms", "note": "위협 정리 탐색(qs) vs 게임 설정, 150ms",
-  "a": ["--a", "{W}", "--opts-a", "lmr2,qs", "--tune-a", "game"], "b": ["--b", "{W}", "--opts-b", "lmr2", "--tune-b", "game"], "time_ms": 150, "max_games": 600},
- {"key": "pos_line_30ms", "note": "위치 점수: 골의 줄 vs 가운데 거리, 30ms",
-  "a": ["--a", "{W}", "--opts-a", "lmr2", "--tune-a", "game,pos_table=1"], "b": ["--b", "{W}", "--opts-b", "lmr2", "--tune-b", "game"], "time_ms": 30, "max_games": 1000},
- {"key": "pos_none_30ms", "note": "위치 점수: 없음 vs 가운데 거리, 30ms",
-  "a": ["--a", "{W}", "--opts-a", "lmr2", "--tune-a", "game,pos_table=2"], "b": ["--b", "{W}", "--opts-b", "lmr2", "--tune-b", "game"], "time_ms": 30, "max_games": 1000},
- {"key": "dyncontempt_30ms", "note": "형세 contempt 50 vs 없음, 30ms",
-  "a": ["--a", "{W}", "--opts-a", "lmr2", "--tune-a", "game,dyn_contempt=50,dyn_threshold=100"], "b": ["--b", "{W}", "--opts-b", "lmr2", "--tune-b", "game"], "time_ms": 30, "max_games": 1000}
+ {"key": "cm_30ms", "note": "응수 수(countermove) vs 게임 설정, 30ms", "a": ["--a", "{W}", "--opts-a", "lmr2,cm", "--tune-a", "game"], "b": ["--b", "{W}", "--opts-b", "lmr2", "--tune-b", "game"], "time_ms": 30, "max_games": 2000},
+ {"key": "ch_30ms", "note": "연속 히스토리 vs 게임 설정, 30ms", "a": ["--a", "{W}", "--opts-a", "lmr2,ch", "--tune-a", "game"], "b": ["--b", "{W}", "--opts-b", "lmr2", "--tune-b", "game"], "time_ms": 30, "max_games": 2000},
+ {"key": "hm_30ms", "note": "히스토리 감점 vs 게임 설정, 30ms", "a": ["--a", "{W}", "--opts-a", "lmr2,hm", "--tune-a", "game"], "b": ["--b", "{W}", "--opts-b", "lmr2", "--tune-b", "game"], "time_ms": 30, "max_games": 2000},
+ {"key": "lmp_30ms", "note": "LMP(늦은 수 가지치기) vs 게임 설정, 30ms", "a": ["--a", "{W}", "--opts-a", "lmr2,lmp", "--tune-a", "game"], "b": ["--b", "{W}", "--opts-b", "lmr2", "--tune-b", "game"], "time_ms": 30, "max_games": 2000},
+ {"key": "fut_30ms", "note": "futility 가지치기 vs 게임 설정, 30ms", "a": ["--a", "{W}", "--opts-a", "lmr2,fut", "--tune-a", "game"], "b": ["--b", "{W}", "--opts-b", "lmr2", "--tune-b", "game"], "time_ms": 30, "max_games": 2000},
+ {"key": "ext_30ms", "note": "위협 연장 vs 게임 설정, 30ms", "a": ["--a", "{W}", "--opts-a", "lmr2,ext", "--tune-a", "game"], "b": ["--b", "{W}", "--opts-b", "lmr2", "--tune-b", "game"], "time_ms": 30, "max_games": 2000},
+ {"key": "cm_150ms", "note": "응수 수(countermove) vs 게임 설정, 150ms", "a": ["--a", "{W}", "--opts-a", "lmr2,cm", "--tune-a", "game"], "b": ["--b", "{W}", "--opts-b", "lmr2", "--tune-b", "game"], "time_ms": 150, "max_games": 600},
+ {"key": "ch_150ms", "note": "연속 히스토리 vs 게임 설정, 150ms", "a": ["--a", "{W}", "--opts-a", "lmr2,ch", "--tune-a", "game"], "b": ["--b", "{W}", "--opts-b", "lmr2", "--tune-b", "game"], "time_ms": 150, "max_games": 600},
+ {"key": "hm_150ms", "note": "히스토리 감점 vs 게임 설정, 150ms", "a": ["--a", "{W}", "--opts-a", "lmr2,hm", "--tune-a", "game"], "b": ["--b", "{W}", "--opts-b", "lmr2", "--tune-b", "game"], "time_ms": 150, "max_games": 600},
+ {"key": "lmp_150ms", "note": "LMP(늦은 수 가지치기) vs 게임 설정, 150ms", "a": ["--a", "{W}", "--opts-a", "lmr2,lmp", "--tune-a", "game"], "b": ["--b", "{W}", "--opts-b", "lmr2", "--tune-b", "game"], "time_ms": 150, "max_games": 600},
+ {"key": "fut_150ms", "note": "futility 가지치기 vs 게임 설정, 150ms", "a": ["--a", "{W}", "--opts-a", "lmr2,fut", "--tune-a", "game"], "b": ["--b", "{W}", "--opts-b", "lmr2", "--tune-b", "game"], "time_ms": 150, "max_games": 600},
+ {"key": "ext_150ms", "note": "위협 연장 vs 게임 설정, 150ms", "a": ["--a", "{W}", "--opts-a", "lmr2,ext", "--tune-a", "game"], "b": ["--b", "{W}", "--opts-b", "lmr2", "--tune-b", "game"], "time_ms": 150, "max_games": 600}
 ]
