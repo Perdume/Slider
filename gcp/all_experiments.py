@@ -212,6 +212,8 @@ if S["RUN_SMP"]:
          game_threads=gt16, max_games=300)
     sprt("smp16_vs_4_30ms", ["--a", W, "--search-threads-a", 16], ["--b", W, "--search-threads-b", 4],
          note="병렬 탐색 16스레드 vs 4스레드 (30ms)", game_threads=gt16, max_games=300)
+    sprt("smp16_60_vs_30", ["--a", W, "--search-threads-a", 16, "--time-ms-a", 60], ["--b", W, "--search-threads-b", 16, "--time-ms-b", 30],
+         note="16스레드끼리 시간 2배 (60 vs 30ms)", game_threads=gt16, max_games=300)
 
 if S["RUN_SMP"] or S["RUN_BIG_NN"]:
     # 섞어 쓰기: 1단계(안전한 수 찾기)는 선형 평가로 깊게, 2단계(안전한 수 중 고르기)만 신경망으로 깊이 4
