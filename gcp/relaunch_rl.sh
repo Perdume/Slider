@@ -1,6 +1,6 @@
 #!/bin/bash
 # GPU 강화학습 VM 이 없으면(끝났거나 Spot 회수) GCS 저장 파일에서 이어받는 VM 을 띄운다. 2026-11-04 00:55 UTC 까지만.
-G="env -u CLOUDSDK_AUTH_ACCESS_TOKEN gcloud"; PR="--project eminent-glider-465204-b2"; HERE="$(cd "$(dirname "$0")" && pwd)"; SG="${SG:-$HERE/startup}"; LEDGER="${LEDGER:-$HOME/slider_cost_ledger.txt}"
+G="${GCLOUD:-gcloud}"; [ -n "${CLOUDSDK_AUTH_ACCESS_TOKEN:-}" ] && G="env -u CLOUDSDK_AUTH_ACCESS_TOKEN $G"; PR="--project eminent-glider-465204-b2"; HERE="$(cd "$(dirname "$0")" && pwd)"; SG="${SG:-$HERE/startup}"; LEDGER="${LEDGER:-$HOME/slider_cost_ledger.txt}"
 END=$(date -u -d '2026-11-04T00:55:00Z' +%s); NOW=$(date -u +%s)
 line=$($G compute instances list $PR --filter="name=slider-gpu" --format="value(zone.basename(),status)")
 zone=${line%%[[:space:]]*}; st=${line##*[[:space:]]}
