@@ -46,11 +46,13 @@ fn tune_field(t: &Tunables, name: &str) -> i32 {
         "lmr2_index" => t.lmr2_index,
         "nt_me" => t.nt_me,
         "nt_opp" => t.nt_opp,
+        "pos_nx" => t.pos_nx,
+        "mob_oc" => t.mob_oc,
         _ => 0,
     }
 }
 
-const T_DEFS: [(&str, f64, f64, f64); 9] = [
+const T_DEFS: [(&str, f64, f64, f64); 11] = [
     ("margin", 8.0, 10.0, 160.0),
     ("trap", 12.0, 0.0, 200.0),
     ("plan_ply", 1.0, 3.0, 16.0),
@@ -58,8 +60,10 @@ const T_DEFS: [(&str, f64, f64, f64); 9] = [
     ("lmr_index", 1.0, 1.0, 8.0),
     ("lmr2_depth", 1.0, 2.0, 8.0),
     ("lmr2_index", 1.0, 1.0, 12.0),
-    ("nt_me", 40.0, -600.0, 600.0),
-    ("nt_opp", 40.0, -600.0, 600.0),
+    ("nt_me", 40.0, 0.0, 1500.0),
+    ("nt_opp", 40.0, -1000.0, 200.0),
+    ("pos_nx", 6.0, -100.0, 100.0),
+    ("mob_oc", 4.0, -80.0, 80.0),
 ];
 
 fn tune_str(theta: &[f64]) -> String {

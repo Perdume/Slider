@@ -21,7 +21,7 @@
 **AI 대국 보기**: AI 끼리 한 판을 두며 매 수마다 판(말 1·2 = 먼저 두는 쪽, X·Y = 나중 쪽), 움직인 말과 방향, 형세 점수와 탐색 깊이를
 로그에 보여 줍니다. "A 쪽은 튜닝 중인 값으로" 를 켜면 폰에서 튜닝한 값(A)과 게임 기본값(B)이 맞붙습니다. PC 에서는 `cargo run --release --bin watch`.
 
-맞추는 값: 탐색 상수 9개 (margin, trap, plan_ply, lmr_depth, lmr_index, lmr2_depth, lmr2_index, nt_me, nt_opp) + 평가 가중치 11개.
+맞추는 값: 탐색 상수 11개 (margin, trap, plan_ply, lmr_depth, lmr_index, lmr2_depth, lmr2_index, nt_me, nt_opp, pos_nx, mob_oc) + 평가 가중치 11개.
 
 ## NPU / GPU 를 쓰지 않는 이유
 - 시간의 대부분은 **탐색**(비트보드 이동 생성과 알파베타)이고, 정수 연산과 분기가 많아서 NPU/GPU 에 올릴 수 없습니다.
