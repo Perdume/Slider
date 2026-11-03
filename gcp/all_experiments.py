@@ -345,6 +345,12 @@ if S["RUN_SPSA_W"]:
     sprt("final_150ms", ["--a", new_w, "--opts-a", "lmr2", *extra], ["--b", W, "--opts-b", "lmr2"], limit=["--time-ms", 150],
          note="새 가중치+상수 vs 지금 게임 설정 (lmr2, 150ms)", max_games=400)
 
+# ---------------------------------------------------------------- H. contempt (무승부를 수를 고르는 쪽에게만 나쁘게)
+if env("RUN_CONTEMPT", True):
+    for cval in (30, 80):
+        sprt(f"contempt{cval}_30ms", ["--a", W, "--opts-a", "lmr2", "--tune-a", f"contempt={cval}"], ["--b", W, "--opts-b", "lmr2"],
+             note=f"contempt {cval} vs 0 (lmr2, 30ms)", max_games=1000)
+
 # ---------------------------------------------------------------- 요약
 lines = [f"설정: {SETTINGS} | threads {THREADS} | 이번 실행 {time.time() - t_start:.0f}초"]
 for key, r in state.items():

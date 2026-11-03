@@ -214,11 +214,13 @@ pub struct Tunables {
     /// lmr2: 이 깊이 이상, 이 순서 이상이면 2단계 줄임
     pub lmr2_depth: i32,
     pub lmr2_index: i32,
+    /// 무승부를 수를 고르는 쪽(탐색의 루트)에게만 이만큼 나쁘게 본다 (상대에게는 그만큼 좋게). 0 이면 무승부 = 0점
+    pub contempt: i32,
 }
 
 impl Default for Tunables {
     fn default() -> Self {
-        Tunables { margin: MARGIN, trap: TRAP_WEIGHT, plan_ply: PLAN_PLY, lmr_depth: 3, lmr_index: 3, lmr2_depth: 5, lmr2_index: 6 }
+        Tunables { margin: MARGIN, trap: TRAP_WEIGHT, plan_ply: PLAN_PLY, lmr_depth: 3, lmr_index: 3, lmr2_depth: 5, lmr2_index: 6, contempt: 0 }
     }
 }
 
@@ -237,6 +239,7 @@ impl Tunables {
                 "lmr_index" => t.lmr_index = v.max(1),
                 "lmr2_depth" => t.lmr2_depth = v,
                 "lmr2_index" => t.lmr2_index = v.max(1),
+                "contempt" => t.contempt = v,
                 other => return Err(format!("알 수 없는 탐색 상수: {}", other)),
             }
         }
@@ -408,6 +411,18 @@ impl SliderAi {
         a.helper_id = id;
         a.stop = Some(stop);
         a
+    }
+
+    /// 무승부 점수 (둘 차례인 쪽 기준). 짝수 ply 는 루트(수를 고르는 쪽) 차례라서 -contempt, 홀수 ply 는 상대 차례라서 +contempt.
+    #[inline(always)]
+    fn draw_score(&self, ply: usize) -> i32 {
+        if self.tune.contempt == 0 {
+            DRAW
+        } else if ply % 2 == 0 {
+            DRAW - self.tune.contempt
+        } else {
+            DRAW + self.tune.contempt
+        }
     }
 
     /// 탐색 상수 (기본은 예전 고정값).
@@ -615,12 +630,12 @@ impl SliderAi {
         let mut i = ply as isize - 2;
         while i >= 0 {
             if self.path[i as usize] == hash {
-                return DRAW;
+                return self.draw_score(ply);
             }
             i -= 2;
         }
         if !self.game_history.is_empty() && self.game_history.get(&hash).copied().unwrap_or(0) >= 2 {
-            return DRAW;
+            return self.draw_score(ply);
         }
 
         // 같은 국면이라도 탐색 방식(정확/낙관, 낙관까지 남은 수)이 다르면 값이 다르므로 TT 키에 넣는다
