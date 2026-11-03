@@ -19,15 +19,17 @@ fn main() {
     en.set_net(Some(net.clone()));
     let text = std::fs::read_to_string(&a[1]).unwrap();
     let (mut n, mut s1, mut s2) = (0.0, 0.0, 0.0);
-    for (i, line) in text.lines().enumerate().step_by(37).take(3000) {
+    let (mut xy, mut xx, mut yy) = (0.0f64, 0.0f64, 0.0f64);
+    for (i, line) in text.lines().enumerate().step_by(7).take(30000) {
         let (t, me, opp, mc, oc, sc) = (num(line, "tiles").unwrap() as u64, num(line, "me").unwrap() as u64, num(line, "opp").unwrap() as u64, num(line, "mc").unwrap() as u64, num(line, "oc").unwrap() as u64, num(line, "score").unwrap());
         if sc.abs() > 4000.0 { continue; }
         let lin = e.static_eval_turn(t, me, opp, mc, oc) as f64;
         let f = e.features_turn(t, me, opp, mc, oc);
         let nn = net.eval_turn(t | me | opp, me, opp, mc, oc, &f) as f64;
         if i < 37 * 15 { println!("score {:6} lin {:6} nn {:6}", sc, lin, nn); }
-        n += 1.0; s1 += (lin - sc).abs(); s2 += (lin + nn - sc).abs();
+        xy += lin * sc; xx += lin * lin; yy += sc * sc; n += 1.0; s1 += (lin - sc).abs(); s2 += (lin + nn - sc).abs();
     }
     println!("n {} 평균 |lin-score| {:.0}  |lin+nn-score| {:.0}", n, s1 / n, s2 / n);
+    println!("최소제곱 배율 score ~ a*lin: a = {:.3}, 상관 {:.3}", xy / xx, xy / (xx * yy).sqrt());
     let _ = en;
 }

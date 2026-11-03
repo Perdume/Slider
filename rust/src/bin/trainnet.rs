@@ -280,6 +280,8 @@ fn load_rows(path: &str, weights: &EvalWeights, tune: slider::ai::Tunables) -> R
     let text = std::fs::read_to_string(path).map_err(|e| format!("{}: {}", path, e))?;
     let mut rows = Vec::new();
     let mut skipped = 0usize;
+    let mut skipped_loud = 0usize;
+    let quiet_only = std::env::var("SLIDER_QUIET").map(|v| v != "0").unwrap_or(true);
     for (n, line) in text.lines().enumerate() {
         if line.trim().is_empty() {
             continue;
@@ -290,7 +292,8 @@ fn load_rows(path: &str, weights: &EvalWeights, tune: slider::ai::Tunables) -> R
                 format!("{}:{}: '{}' 를 읽을 수 없습니다 (selfplay 를 --positions yes 로 돌렸는지 확인하세요)", path, n + 1, k)
             })
         };
-        let score = get("score")?;
+        // SLIDER_SCORE_SCALE: 탐색 점수를 선형 평가 눈금으로 맞추는 배율 (탐색 점수 / 배율)
+        let score = get("score")? / std::env::var("SLIDER_SCORE_SCALE").ok().and_then(|v| v.parse::<f64>().ok()).unwrap_or(1.0);
         if score.abs() >= SOLVED {
             skipped += 1;
             continue;
@@ -306,6 +309,10 @@ fn load_rows(path: &str, weights: &EvalWeights, tune: slider::ai::Tunables) -> R
         let _ = &features;
         let ints = engine.features_turn(tiles, me, opp, mc, oc);
         let lin = engine.static_eval_turn(tiles, me, opp, mc, oc) as f64;
+        if quiet_only && !engine.is_quiet() {
+            skipped_loud += 1;
+            continue;
+        }
         let mut buf = [0u16; MAX_ACTIVE];
         let count = nnue::active_inputs_turn(tiles, me, opp, mc, oc, &mut buf);
         rows.push(Row {
@@ -318,7 +325,7 @@ fn load_rows(path: &str, weights: &EvalWeights, tune: slider::ai::Tunables) -> R
             outcome: get("outcome")? as f32,
         });
     }
-    println!("{}: 국면 {}개 읽음 (확정 승패 {}개 제외)", path, rows.len(), skipped);
+    println!("{}: 국면 {}개 읽음 (확정 승패 {}개, 위협 있는 국면 {}개 제외)", path, rows.len(), skipped, skipped_loud);
     Ok(rows)
 }
 

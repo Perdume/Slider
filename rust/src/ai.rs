@@ -631,6 +631,12 @@ impl SliderAi {
         self.feature
     }
 
+    /// 마지막으로 계산한 특징 기준: 지금 / 다음다음 차례 모두 골 위협이 없는 국면
+    #[inline]
+    pub fn is_quiet(&self) -> bool {
+        self.feature[0] == 0 && self.feature[1] == 0 && self.feature[2] == 0 && self.cyc[0] == 0 && self.cyc[1] == 0
+    }
+
     /// 정적 평가 (신경망 제외, 선형 평가 + 순환 규칙 요소). 신경망 학습에서 기준선으로 쓴다
     pub fn static_eval_turn(&mut self, tiles: u64, me: u64, opp: u64, mc: u64, oc: u64) -> i32 {
         let tiles = tiles | me | opp;
@@ -1201,7 +1207,10 @@ impl SliderAi {
         }
         score += self.tune.nt_me * self.cyc[0] + self.tune.nt_opp * self.cyc[1] + self.tune.pos_nx * self.cyc[2] + self.tune.mob_oc * self.cyc[3];
         if let Some(net) = &self.net {
-            score += net.eval_turn(tiles, me, opp, mc, oc, &self.feature);
+            // 신경망은 조용한 국면(양쪽 다 골 위협 없음)에서만 더한다. 학습도 조용한 국면만으로 한다
+            if self.is_quiet() {
+                score += net.eval_turn(tiles, me, opp, mc, oc, &self.feature);
+            }
         }
         score
     }
