@@ -82,6 +82,11 @@ def main():
     eng_files = []
     for n_games, seed in ENGINE_SETS:
         path = OUT / f"engine_cycle_{n_games}g_{ENGINE_TIME_MS}ms_s{seed}.jsonl"
+        if not path.exists() and E("BUCKET"):
+            # 다른 VM 이 미리 만들어 둔 판이 있으면 받는다
+            subprocess.run(["gsutil", "-q", "cp", f"gs://{E('BUCKET')}/{path.name}", str(path)], check=False)
+            if path.exists():
+                log(f"엔진 판 받음: {path.name}")
         if not path.exists():
             t0 = time.time()
             tmp = path.with_suffix(".tmp")
