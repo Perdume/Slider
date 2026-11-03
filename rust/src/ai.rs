@@ -294,8 +294,9 @@ impl Default for Tunables {
 impl Tunables {
     /// 게임용 상수 (새 규칙): VM 에서 상수+가중치를 같이 SPSA 320회로 맞춘 값 (예전 게임 설정 대비 30ms Elo +217, 150ms Elo +211)
     /// + 다음다음 차례 위협 점수 nt_me/nt_opp (단독 +36, 히스토리 감점과 묶어 30ms +31 / 150ms +18). 게임 탐색은 lmr2,hm
+    /// + SPSA 3차 (lmr2,hm 에서 상수 9 + 가중치 11, 320회): 그 전 설정 대비 30ms +49, 150ms +40
     pub fn game() -> Self {
-        Tunables { margin: 77, trap: 24, plan_ply: 12, lmr_depth: 2, lmr_index: 1, lmr2_depth: 4, lmr2_index: 2, nt_me: 450, nt_opp: -300, ..Tunables::default() }
+        Tunables { margin: 87, trap: 40, plan_ply: 15, lmr_depth: 2, lmr_index: 1, lmr2_depth: 3, lmr2_index: 1, nt_me: 688, nt_opp: -324, ..Tunables::default() }
     }
 
     /// 예전 규칙(free)용 게임 상수: 예전 규칙에서 SPSA 200회로 맞춘 값 (기본 상수 대비 Elo +50)

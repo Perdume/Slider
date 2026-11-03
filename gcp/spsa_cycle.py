@@ -27,8 +27,8 @@ MAX_PLIES = 400
 SEED = 7
 
 # 탐색 상수: 이름, 시작값(game), 흔드는 폭, 최소, 최대
-T_PARAMS = [("margin", 77, 8, 10, 160), ("trap", 24, 12, 0, 200), ("plan_ply", 12, 1, 3, 16),
-            ("lmr_depth", 2, 1, 1, 6), ("lmr_index", 1, 1, 1, 8), ("lmr2_depth", 4, 1, 2, 8), ("lmr2_index", 2, 1, 1, 12)]
+T_PARAMS = [("margin", 87, 8, 10, 160), ("trap", 40, 12, 0, 200), ("plan_ply", 15, 1, 3, 18),
+            ("lmr_depth", 2, 1, 1, 6), ("lmr_index", 1, 1, 1, 8), ("lmr2_depth", 3, 1, 2, 8), ("lmr2_index", 1, 1, 1, 12)]
 # 더 맞출 상수: SPSA_EXTRA="nt_me:0:40:-600:600,nt_opp:0:40:-600:600" (이름:시작:폭:최소:최대)
 for part in filter(None, os.environ.get("SPSA_EXTRA", "").split(",")):
     n, a, c, lo, hi = part.split(":")
