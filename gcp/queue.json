@@ -1,14 +1,4 @@
 [
- {"key": "cm_30ms", "note": "응수 수(countermove) vs 게임 설정, 30ms", "a": ["--a", "{W}", "--opts-a", "lmr2,cm", "--tune-a", "game"], "b": ["--b", "{W}", "--opts-b", "lmr2", "--tune-b", "game"], "time_ms": 30, "max_games": 2000},
- {"key": "ch_30ms", "note": "연속 히스토리 vs 게임 설정, 30ms", "a": ["--a", "{W}", "--opts-a", "lmr2,ch", "--tune-a", "game"], "b": ["--b", "{W}", "--opts-b", "lmr2", "--tune-b", "game"], "time_ms": 30, "max_games": 2000},
- {"key": "hm_30ms", "note": "히스토리 감점 vs 게임 설정, 30ms", "a": ["--a", "{W}", "--opts-a", "lmr2,hm", "--tune-a", "game"], "b": ["--b", "{W}", "--opts-b", "lmr2", "--tune-b", "game"], "time_ms": 30, "max_games": 2000},
- {"key": "lmp_30ms", "note": "LMP(늦은 수 가지치기) vs 게임 설정, 30ms", "a": ["--a", "{W}", "--opts-a", "lmr2,lmp", "--tune-a", "game"], "b": ["--b", "{W}", "--opts-b", "lmr2", "--tune-b", "game"], "time_ms": 30, "max_games": 2000},
- {"key": "fut_30ms", "note": "futility 가지치기 vs 게임 설정, 30ms", "a": ["--a", "{W}", "--opts-a", "lmr2,fut", "--tune-a", "game"], "b": ["--b", "{W}", "--opts-b", "lmr2", "--tune-b", "game"], "time_ms": 30, "max_games": 2000},
- {"key": "ext_30ms", "note": "위협 연장 vs 게임 설정, 30ms", "a": ["--a", "{W}", "--opts-a", "lmr2,ext", "--tune-a", "game"], "b": ["--b", "{W}", "--opts-b", "lmr2", "--tune-b", "game"], "time_ms": 30, "max_games": 2000},
- {"key": "cm_150ms", "note": "응수 수(countermove) vs 게임 설정, 150ms", "a": ["--a", "{W}", "--opts-a", "lmr2,cm", "--tune-a", "game"], "b": ["--b", "{W}", "--opts-b", "lmr2", "--tune-b", "game"], "time_ms": 150, "max_games": 600},
- {"key": "ch_150ms", "note": "연속 히스토리 vs 게임 설정, 150ms", "a": ["--a", "{W}", "--opts-a", "lmr2,ch", "--tune-a", "game"], "b": ["--b", "{W}", "--opts-b", "lmr2", "--tune-b", "game"], "time_ms": 150, "max_games": 600},
- {"key": "hm_150ms", "note": "히스토리 감점 vs 게임 설정, 150ms", "a": ["--a", "{W}", "--opts-a", "lmr2,hm", "--tune-a", "game"], "b": ["--b", "{W}", "--opts-b", "lmr2", "--tune-b", "game"], "time_ms": 150, "max_games": 600},
- {"key": "lmp_150ms", "note": "LMP(늦은 수 가지치기) vs 게임 설정, 150ms", "a": ["--a", "{W}", "--opts-a", "lmr2,lmp", "--tune-a", "game"], "b": ["--b", "{W}", "--opts-b", "lmr2", "--tune-b", "game"], "time_ms": 150, "max_games": 600},
- {"key": "fut_150ms", "note": "futility 가지치기 vs 게임 설정, 150ms", "a": ["--a", "{W}", "--opts-a", "lmr2,fut", "--tune-a", "game"], "b": ["--b", "{W}", "--opts-b", "lmr2", "--tune-b", "game"], "time_ms": 150, "max_games": 600},
- {"key": "ext_150ms", "note": "위협 연장 vs 게임 설정, 150ms", "a": ["--a", "{W}", "--opts-a", "lmr2,ext", "--tune-a", "game"], "b": ["--b", "{W}", "--opts-b", "lmr2", "--tune-b", "game"], "time_ms": 150, "max_games": 600}
+ {"key": "combo_150ms", "note": "lmp+cm+hm+fut 묶음 vs 게임 설정, 150ms", "a": ["--a", "{W}", "--opts-a", "lmr2,lmp,cm,hm,fut", "--tune-a", "game"], "b": ["--b", "{W}", "--opts-b", "lmr2", "--tune-b", "game"], "time_ms": 150, "max_games": 1000, "elo1": 15},
+ {"key": "combo_30ms", "note": "lmp+cm+hm+fut 묶음 vs 게임 설정, 30ms", "a": ["--a", "{W}", "--opts-a", "lmr2,lmp,cm,hm,fut", "--tune-a", "game"], "b": ["--b", "{W}", "--opts-b", "lmr2", "--tune-b", "game"], "time_ms": 30, "max_games": 2000, "elo1": 15}
 ]
