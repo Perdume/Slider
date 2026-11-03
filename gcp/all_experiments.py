@@ -60,6 +60,8 @@ SETTINGS = {
     "SPSA_ITERS": env("SPSA_ITERS", 200),
     "SPSA_GAMES": env("SPSA_GAMES", 64),
     "SPSA_LR": env("SPSA_LR", 1.5),
+    "RUN_SPSA_W": env("RUN_SPSA_W", True),
+    "SPSA_W_ITERS": env("SPSA_W_ITERS", 300),
 }
 S = SETTINGS
 THREADS = os.cpu_count() or 2
@@ -297,11 +299,60 @@ if S["RUN_SPSA"]:
     sprt("spsa_150ms", ["--a", W, "--opts-a", "lmr2", "--tune-a", final], ["--b", W, "--opts-b", "lmr2"], limit=["--time-ms", 150],
          note="SPSA 상수 vs 기본 상수 (lmr2, 150ms)", max_games=400)
 
+# ---------------------------------------------------------------- G. 평가 가중치 SPSA (대국을 직접 이기도록)
+# 판 결과를 맞히는 튜닝(Texel)은 수 제한 없는 데이터에서 신호가 없었다 (상관 +0.01). 그래서 대국 결과로 직접 맞춘다.
+W_NAMES = ["threat1", "threat2", "threat2PerThreat", "mobility", "reach", "plan2", "plan3", "plan4", "plan5", "position", "tempo"]
+
+
+def write_w(path, vec):
+    path.write_text(json.dumps({n: int(round(v)) for n, v in zip(W_NAMES, vec)}))
+    return path
+
+
+if S["RUN_SPSA_W"]:
+    base_w = json.loads(W.read_text())
+    w0 = np.array([float(base_w[n]) for n in W_NAMES])
+    cw = np.maximum(4.0, 0.15 * np.abs(w0))
+    lo_w, hi_w = w0 - np.maximum(200.0, 3 * np.abs(w0)), w0 + np.maximum(200.0, 3 * np.abs(w0))
+    tune_final = state.get("spsa_result", {}).get("note", "").replace("SPSA 결과 ", "")
+    spw = state.get("spsa_w", {"iter": 0, "theta": w0.tolist(), "log": []})
+    pw, mw = WORK / "spsa_w_plus.json", WORK / "spsa_w_minus.json"
+    while spw["iter"] < S["SPSA_W_ITERS"]:
+        k = spw["iter"]
+        rng = np.random.default_rng(S["SEED"] * 7_000_003 + k)
+        delta = rng.choice([-1.0, 1.0], size=len(W_NAMES))
+        theta = np.array(spw["theta"], float)
+        write_w(pw, np.clip(theta + cw * delta, lo_w, hi_w))
+        write_w(mw, np.clip(theta - cw * delta, lo_w, hi_w))
+        cmd = [BIN / "matchup", "--a", pw, "--opts-a", "lmr2", "--b", mw, "--opts-b", "lmr2", "--games", S["SPSA_GAMES"],
+               "--time-ms", S["MATCH_TIME_MS"], "--max-plies", S["MAX_PLIES"], "--threads", THREADS, "--seed", 90_000 + k]
+        out = subprocess.run(list(map(str, cmd)), capture_output=True, text=True, check=True).stdout
+        r = json.loads([l for l in out.splitlines() if l.startswith("RESULT ")][-1][len("RESULT "):])
+        net = (r["aWins"] - r["bWins"]) / r["games"]
+        theta = np.clip(theta + S["SPSA_LR"] * cw * net * delta, lo_w, hi_w)
+        spw["theta"], spw["iter"] = theta.tolist(), k + 1
+        spw["log"].append([k + 1, round(net, 3), [int(round(v)) for v in theta]])
+        state["spsa_w"] = spw
+        save_state()
+        if (k + 1) % 10 == 0:
+            log(f"[가중치 SPSA {k + 1}/{S['SPSA_W_ITERS']}] " + ", ".join(f"{n}={int(round(v))}" for n, v in zip(W_NAMES, theta)))
+    new_w = write_w(OUT / "data" / "weights_spsa.json", np.array(spw["theta"]))
+    state["spsa_w_result"] = {"note": "가중치 SPSA 결과 " + new_w.read_text()}
+    save_state()
+    extra = ["--tune-a", tune_final] if tune_final else []
+    sprt("final_30ms", ["--a", new_w, "--opts-a", "lmr2", *extra], ["--b", W, "--opts-b", "lmr2"],
+         note="새 가중치+상수 vs 지금 게임 설정 (lmr2, 30ms)")
+    sprt("final_150ms", ["--a", new_w, "--opts-a", "lmr2", *extra], ["--b", W, "--opts-b", "lmr2"], limit=["--time-ms", 150],
+         note="새 가중치+상수 vs 지금 게임 설정 (lmr2, 150ms)", max_games=400)
+
 # ---------------------------------------------------------------- 요약
 lines = [f"설정: {SETTINGS} | threads {THREADS} | 이번 실행 {time.time() - t_start:.0f}초"]
 for key, r in state.items():
     if key == "spsa":
         lines.append(f"{key:<22} 반복 {r['iter']}회, 현재 {tune_str(r['theta'])}")
+        continue
+    if key == "spsa_w":
+        lines.append(f"{key:<22} 반복 {r['iter']}회, 현재 " + ", ".join(f"{n}={int(round(v))}" for n, v in zip(W_NAMES, r["theta"])))
         continue
     lines.append(f"{key:<22} {r.get('note', '')[:60]:<40} {fmt(r)}")
 text = "\n".join(lines)
