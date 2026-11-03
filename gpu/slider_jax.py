@@ -172,3 +172,69 @@ def random_policy(valid, n, ply, key):
 def fixed_policy(a, b):
     """(ply*a + b) 번째 수. Rust 쪽 `rules_dump games` 와 같은 규칙."""
     return lambda valid, n, ply, key: (ply * a + b) % jnp.maximum(n, 1)
+
+
+# ------------------------------------------------------------------ 순환 규칙 (지금 게임)
+# 대각선 배치, 말 하나씩 시계 방향: 쪽0 (0,6) -> 쪽1 (6,6) -> 쪽0 (6,0) -> 쪽1 (0,0) -> ...
+# 상태에 mc (둘 차례인 쪽이 지금 움직일 말, 칸 하나) 와 oc (상대가 다음 차례에 움직일 말) 를 더한다.
+# 수 하나 = from*4 + dir (196개, 움직일 말이 정해져 있어서 말 번호가 필요 없다). 순서는 Rust generate_turn 과 같다.
+NUM_TURN_MOVES = N * 4
+CYCLE_P0 = jnp.asarray(_mask([6, 42]))
+CYCLE_P1 = jnp.asarray(_mask([48, 0]))
+CYCLE_C0 = jnp.asarray(_mask([6]))
+CYCLE_C1 = jnp.asarray(_mask([48]))
+_TKEYS = jnp.asarray(_rng.randint(1, 2**31 - 1, size=(2, N, 2)).astype(np.uint32) * 2 + 1)
+
+
+def turn_hash(tiles, me, opp, mc, oc):
+    """차례 정보(mc, oc)까지 넣은 국면 해시."""
+    extra = jnp.where(mc[:, None], _TKEYS[0], 0) ^ jnp.where(oc[:, None], _TKEYS[1], 0)
+    return pos_hash(tiles, me, opp) ^ jnp.bitwise_xor.reduce(extra, axis=0)
+
+
+def legal_turn(tiles, me, opp, mc):
+    """mc 말의 가능한 수 bool[196] (from*4+dir) 와 그 말의 칸 번호."""
+    s = jnp.argmax(mc)
+    tp = jnp.concatenate([tiles, jnp.array([True])])
+    empty_nb = ~tp[NB[:N]]
+    blocked = (me | opp) & ~(jnp.arange(N) == s)
+    return (reach(tiles, blocked, s)[:, None] & empty_nb).reshape(NUM_TURN_MOVES), s
+
+
+def apply_turn(tiles, me, s, a):
+    """칸 s 의 말로 수 a(from*4+dir)를 둔다. (새 tiles, 새 me, 멈춘 칸)."""
+    c, d = a // 4, a % 4
+    dst = slide_dest(tiles)[c, d]
+    return tiles.at[c].set(False).at[dst].set(True), me.at[s].set(False).at[dst].set(True), dst
+
+
+def _cycle_step(policy, carry, key, max_plies):
+    tiles, me, opp, mc, oc, hist, done, winner, ply = carry
+    valid, s = legal_turn(tiles, me, opp, mc)
+    n = valid.sum()
+    has = n > 0
+    j = policy(valid, n, ply, jax.random.fold_in(key, ply))
+    a = nth_true(valid, jnp.clip(j, 0, jnp.maximum(n - 1, 0)))
+    t2, m2, dst = apply_turn(tiles, me, s, a)
+    win = has & (dst == GOAL)
+    nt = jnp.where(has, t2, tiles)
+    nm = jnp.where(has, m2, me)
+    nc = me & ~mc  # 내 다음 차례에는 다른 말
+    h = turn_hash(nt, opp, nm, oc, nc)
+    prior = ((hist == h).all(-1) & (jnp.arange(max_plies + 1) <= ply)).sum()
+    rep = prior + 1 >= 3
+    hist = hist.at[jnp.where(done, max_plies, ply + 1)].set(h)
+
+    def keep(old, new):
+        return jnp.where(done, old, new)
+
+    return (keep(tiles, nt), keep(me, opp), keep(opp, nm), keep(mc, oc), keep(oc, nc), hist, keep(done, win | rep),
+            keep(winner, jnp.where(win, ply & 1, -1).astype(jnp.int32)), keep(ply, ply + 1))
+
+
+def play_cycle_game(policy, key, max_plies=DEFAULT_MAX_PLIES):
+    """순환 규칙으로 한 판. (winner, plies, ended)."""
+    hist = jnp.zeros((max_plies + 1, 2), jnp.uint32).at[0].set(turn_hash(START_TILES, CYCLE_P0, CYCLE_P1, CYCLE_C0, CYCLE_C1))
+    init = (START_TILES, CYCLE_P0, CYCLE_P1, CYCLE_C0, CYCLE_C1, hist, jnp.array(False), jnp.int32(-1), jnp.int32(0))
+    final = lax.while_loop(lambda c: (~c[6]) & (c[8] < max_plies), lambda c: _cycle_step(policy, c, key, max_plies), init)
+    return final[7], final[8], final[6]

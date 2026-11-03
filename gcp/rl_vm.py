@@ -26,12 +26,12 @@ ARCH = E("ARCH", "conv")
 CHANNELS = int(E("CHANNELS", 64))
 BLOCKS = int(E("BLOCKS", 6))
 HIDDEN = int(E("HIDDEN", 256))
-ENGINE_SETS = [(600, 1), (1400, 2)]
+ENGINE_SETS = [(1000, 1), (1000, 2)]
 ENGINE_TIME_MS = 30
 PRETRAIN_STEPS = int(E("PRETRAIN_STEPS", 12000))
 GAMES = int(E("GAMES", 512))
 SIMULATIONS = int(E("SIMULATIONS", 32))
-MAX_LEN = 200
+MAX_LEN = 300
 DRAW_THRESHOLD = 0.2
 LR = 1e-3
 TRAIN_STEPS = 200
@@ -49,7 +49,7 @@ OUT = Path(E("OUT", Path.home() / "slider_rl"))
 OUT.mkdir(parents=True, exist_ok=True)
 BIN = REPO / "rust" / "target" / "release"
 CPUS = os.cpu_count()
-TAG = f"conv_c{CHANNELS}b{BLOCKS}" if ARCH == "conv" else f"mlp_h{HIDDEN}"
+TAG = (f"cycle_conv_c{CHANNELS}b{BLOCKS}" if ARCH == "conv" else f"cycle_mlp_h{HIDDEN}")
 
 
 def put_attr(key, value):
@@ -81,11 +81,11 @@ def main():
     log(f"device: {jax.devices()} | CPU {CPUS} | {TAG}")
     eng_files = []
     for n_games, seed in ENGINE_SETS:
-        path = OUT / f"engine_{n_games}g_{ENGINE_TIME_MS}ms_s{seed}.jsonl"
+        path = OUT / f"engine_cycle_{n_games}g_{ENGINE_TIME_MS}ms_s{seed}.jsonl"
         if not path.exists():
             t0 = time.time()
             tmp = path.with_suffix(".tmp")
-            subprocess.run([str(BIN / "selfplay"), "--games", str(n_games), "--time-ms", str(ENGINE_TIME_MS), "--opts", "lmr2",
+            subprocess.run([str(BIN / "selfplay"), "--games", str(n_games), "--time-ms", str(ENGINE_TIME_MS), "--rules", "cycle", "--opts", "lmr2",
                             "--weights", str(REPO / "weights" / "tuned.json"), "--max-plies", "1000", "--random-plies", "4",
                             "--epsilon", "0.05", "--threads", str(CPUS), "--seed", str(seed), "--positions", "yes",
                             "--out", str(tmp)], check=True, stdout=subprocess.DEVNULL)

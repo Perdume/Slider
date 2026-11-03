@@ -26,29 +26,30 @@ def mask_to_bits(m):
     return int(_POW[np.asarray(m, bool)].sum())
 
 
-def rust_move_to_action(m, me_mask):
-    """Rust 수 정수(from | dir<<6 | dest<<8 | src<<14) -> 강화학습의 수 번호 (말 순서는 칸 번호 오름차순)."""
+def rust_move_to_action(m, me_mask=None):
+    """Rust 수 정수(from | dir<<6 | dest<<8 | src<<14) -> 강화학습의 수 번호 from*4+dir (순환 규칙: 움직일 말은 정해져 있다)."""
     if m < 0:
         return az.PASS
-    frm, d, src = m & 63, (m >> 6) & 3, (m >> 14) & 63
-    cells = np.nonzero(me_mask)[0]
-    k = 0 if src == cells[0] else 1
-    return int(k * 196 + frm * 4 + d)
+    return int((m & 63) * 4 + ((m >> 6) & 3))
 
 
 def load_engine_data(paths):
-    """(입력 uint8[N,147], 수 번호 int32[N], 가치 목표 float32[N]: 이김 +1 / 무 0 / 짐 -1)."""
+    """(입력 uint8[N,245], 수 번호 int32[N], 가치 목표 float32[N]: 이김 +1 / 무 0 / 짐 -1).
+    순환 규칙 데이터 (selfplay --rules cycle --positions yes, 줄마다 mc / oc 가 있음) 만 읽는다."""
     obs, act, z = [], [], []
     for p in paths:
         with open(p) as f:
             for line in f:
                 r = json.loads(line)
-                if "move" not in r:
+                if "move" not in r or "mc" not in r or r["mc"] == r["me"]:
                     continue
                 t, me, op = bits_to_mask(r["tiles"]), bits_to_mask(r["me"]), bits_to_mask(r["opp"])
-                obs.append(np.concatenate([t, me, op]).astype(np.uint8))
-                act.append(rust_move_to_action(r["move"], me))
+                mc, oc = bits_to_mask(r["mc"]), bits_to_mask(r["oc"])
+                obs.append(np.concatenate([t, me, op, mc, oc]).astype(np.uint8))
+                act.append(rust_move_to_action(r["move"]))
                 z.append(2.0 * r["outcome"] - 1.0)
+    if not obs:
+        raise ValueError(f"순환 규칙 엔진 판이 없습니다 (예전 규칙 파일인지 확인): {paths}")
     return np.stack(obs), np.array(act, np.int32), np.array(z, np.float32)
 
 
@@ -73,14 +74,14 @@ def policy_accuracy(params, obs, act, n=20000, seed=0):
     idx = rng.choice(len(act), size=min(n, len(act)), replace=False)
     x = jnp.asarray(obs[idx], jnp.float32)
     logits, _ = az.apply_net(params, x)
-    t, me, op = x[:, :49] > 0, x[:, 49:98] > 0, x[:, 98:] > 0
-    mask = jax.vmap(az.legal_mask)(t, me, op)
+    t, me, op, mc = x[:, :49] > 0, x[:, 49:98] > 0, x[:, 98:147] > 0, x[:, 147:196] > 0
+    mask = jax.vmap(az.legal_mask)(t, me, op, mc)
     pred = np.asarray(jnp.argmax(jnp.where(mask, logits, -1e9), -1))
     return float((pred == act[idx]).mean())
 
 
 class Engine:
-    """Rust bestmove 서버. moves([(tiles, me, opp), ...]) -> 엔진의 수 정수 목록 (-1 = 통과).
+    """Rust bestmove 서버. moves([(tiles, me, opp, mc, oc), ...]) -> 엔진의 수 정수 목록 (-1 = 통과).
     서버가 죽었거나(셀을 중간에 멈춰서) 주고받기가 꼬였으면 새로 띄워서 다시 묻는다."""
 
     def __init__(self, binary, time_ms=50, threads=None, search="lmr2", weights="tuned", err_path="/tmp/bestmove_err.txt"):
@@ -102,8 +103,8 @@ class Engine:
 
     def _ask(self, positions):
         self.dirty = True
-        for t, m, o in positions:
-            self.p.stdin.write(f"{t} {m} {o}\n")
+        for pos in positions:
+            self.p.stdin.write(" ".join(str(int(v)) for v in pos) + "\n")
         self.p.stdin.write("\n")
         self.p.stdin.flush()
         out = []
@@ -141,10 +142,10 @@ class Engine:
 
 def evaluate_vs_engine(params, engine, batch, num_simulations, max_len, draw_threshold=None, seed=0):
     """신경망+MCTS 가 판의 절반은 먼저, 절반은 나중에 Rust 엔진과 둔다. (이긴 판, 무승부, 진 판)."""
-    choose = jax.jit(lambda p, k, t, m, o, h, ply: az.choose_action(p, k, t, m, o, h, ply, num_simulations, max_len,
-                                                                     draw_threshold)[0])
+    choose = jax.jit(lambda p, k, t, m, o, mc, oc, h, ply: az.choose_action(p, k, t, m, o, mc, oc, h, ply, num_simulations,
+                                                                             max_len, draw_threshold)[0])
     advance = jax.jit(az._advance, static_argnames=("max_len",))
-    tiles, me, opp, hist = az._start(batch, max_len)
+    tiles, me, opp, mc, oc, hist = az._start(batch, max_len)
     done = jnp.zeros(batch, bool)
     winner = jnp.full(batch, -1, jnp.int32)
     agent_first = np.arange(batch) % 2 == 0
@@ -154,16 +155,16 @@ def evaluate_vs_engine(params, engine, batch, num_simulations, max_len, draw_thr
         if d.all():
             break
         key, k = jax.random.split(key)
-        action = np.array(choose(params, k, tiles, me, opp, hist, jnp.int32(ply)))
+        action = np.array(choose(params, k, tiles, me, opp, mc, oc, hist, jnp.int32(ply)))
         engine_turn = (agent_first != (ply % 2 == 0)) & ~d
         need = np.nonzero(engine_turn)[0]
         if len(need):
-            T, M, O = np.asarray(tiles), np.asarray(me), np.asarray(opp)
-            em = engine.moves([(mask_to_bits(T[i]), mask_to_bits(M[i]), mask_to_bits(O[i])) for i in need])
+            T, M, O, MC, OC = (np.asarray(x) for x in (tiles, me, opp, mc, oc))
+            em = engine.moves([tuple(mask_to_bits(X[i]) for X in (T, M, O, MC, OC)) for i in need])
             for i, m in zip(need, em):
-                action[i] = rust_move_to_action(m, M[i])
-        tiles, me, opp, hist, done, winner = advance(tiles, me, opp, hist, done, winner, jnp.int32(ply),
-                                                     jnp.asarray(action), max_len=max_len)
+                action[i] = rust_move_to_action(m)
+        tiles, me, opp, mc, oc, hist, done, winner = advance(tiles, me, opp, mc, oc, hist, done, winner, jnp.int32(ply),
+                                                             jnp.asarray(action), max_len=max_len)
     w = np.asarray(winner)
     agent_side = np.where(agent_first, 0, 1)
     return int((w == agent_side).sum()), int((w < 0).sum()), int(((w >= 0) & (w != agent_side)).sum())

@@ -121,6 +121,44 @@ fn main() {
                 }
             }
         }
+        "cycle_games" => {
+            // 순환 규칙 (대각선 배치, 말 하나씩 시계 방향) 으로 정해진 규칙 대국
+            let b_max = args.get(3).and_then(|s| s.parse().ok()).unwrap_or(20usize);
+            for a_ in 1..=a as usize {
+                for b_ in 0..b_max {
+                    let (mut tiles, mut pieces, mut cur) = slider::arena::Rules::Cycle.start();
+                    let mut counts: HashMap<u64, u32> = HashMap::new();
+                    *counts.entry(slider::ai::turn_hash(tiles, pieces[0], pieces[1], cur[0], cur[1])).or_insert(0) += 1;
+                    let (mut winner, mut ply) = (-1i32, 0usize);
+                    while ply < 150 {
+                        let side = ply & 1;
+                        let me = pieces[side];
+                        let mc = cur[side];
+                        let (n, _) = slider::ai::generate_turn(tiles, me, pieces[1 - side], mc, &mut buf);
+                        if n > 0 {
+                            let m = buf[(ply * a_ + b_) % n];
+                            tiles = bb::apply(tiles, m);
+                            pieces[side] = bb::apply_pieces(me, m);
+                            if bb::dest(m) == bb::GOAL {
+                                winner = side as i32;
+                                ply += 1;
+                                break;
+                            }
+                        }
+                        cur[side] = slider::ai::next_turn_pieces(me, mc, pieces[side]);
+                        let next = 1 - side;
+                        let seen = counts.entry(slider::ai::turn_hash(tiles, pieces[next], pieces[side], cur[next], cur[side])).or_insert(0);
+                        *seen += 1;
+                        if *seen >= 3 {
+                            ply += 1;
+                            break;
+                        }
+                        ply += 1;
+                    }
+                    println!("{} {} {} {}", a_, b_, winner, ply);
+                }
+            }
+        }
         "playouts" => {
             let mut rng = Rng(seed.wrapping_mul(0x9E3779B97F4A7C15) | 1);
             let t0 = Instant::now();

@@ -83,7 +83,26 @@ def check_games(a_max=20, b_max=20):
     assert bad == 0
 
 
+def check_cycle_games(a_max=20, b_max=20):
+    """순환 규칙 (지금 게임): 정해진 규칙 대국의 결과가 Rust 와 같은지."""
+    expect = [tuple(map(int, l.split())) for l in run("cycle_games", a_max, b_max)]
+    a = jnp.array([e[0] for e in expect])
+    b = jnp.array([e[1] for e in expect])
+
+    @jax.jit
+    @jax.vmap
+    def play(a, b):
+        return sj.play_cycle_game(lambda valid, n, ply, key: (ply * a + b) % jnp.maximum(n, 1), jax.random.PRNGKey(0), max_plies=150)
+
+    w, p, _ = (np.asarray(x) for x in play(a, b))
+    bad = sum(1 for e, ww, pp in zip(expect, w, p) if (e[2], e[3]) != (int(ww), int(pp)))
+    kinds = {k: int((w == k).sum()) for k in (-1, 0, 1)}
+    print(f"[순환 규칙] 정해진 규칙 대국 {len(expect)}판 (무승부/선승/후승 {kinds}): 결과 다른 판 {bad}개  {'OK' if bad == 0 else 'MISMATCH'}")
+    assert bad == 0
+
+
 if __name__ == "__main__":
     check_perft()
     check_positions()
     check_games()
+    check_cycle_games()
