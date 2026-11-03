@@ -1,6 +1,6 @@
 [
- {"key": "nt450_300", "note": "[순환] nt_me=450,nt_opp=-300 vs 게임(300/-300)", "a": ["--a", "{W}", "--opts-a", "lmr2,hm", "--tune-a", "game,nt_me=450,nt_opp=-300"], "b": ["--b", "{W}", "--opts-b", "lmr2,hm", "--tune-b", "game"], "time_ms": 30, "max_games": 2000},
- {"key": "nt300_0", "note": "[순환] nt_me=300,nt_opp=0 vs 게임(300/-300)", "a": ["--a", "{W}", "--opts-a", "lmr2,hm", "--tune-a", "game,nt_me=300,nt_opp=0"], "b": ["--b", "{W}", "--opts-b", "lmr2,hm", "--tune-b", "game"], "time_ms": 30, "max_games": 2000},
- {"key": "nt300_p100", "note": "[순환] nt_me=300,nt_opp=+100 vs 게임(300/-300)", "a": ["--a", "{W}", "--opts-a", "lmr2,hm", "--tune-a", "game,nt_me=300,nt_opp=100"], "b": ["--b", "{W}", "--opts-b", "lmr2,hm", "--tune-b", "game"], "time_ms": 30, "max_games": 2000},
- {"key": "nt600_600", "note": "[순환] nt_me=600,nt_opp=-600 vs 게임(300/-300)", "a": ["--a", "{W}", "--opts-a", "lmr2,hm", "--tune-a", "game,nt_me=600,nt_opp=-600"], "b": ["--b", "{W}", "--opts-b", "lmr2,hm", "--tune-b", "game"], "time_ms": 30, "max_games": 2000}
+ {"key": "nt700_300", "note": "[순환] nt 700/-300 vs 게임(450/-300)", "a": ["--a", "{W}", "--opts-a", "lmr2,hm", "--tune-a", "game,nt_me=700,nt_opp=-300"], "b": ["--b", "{W}", "--opts-b", "lmr2,hm", "--tune-b", "game"], "time_ms": 30, "max_games": 2000},
+ {"key": "nt450_500", "note": "[순환] nt 450/-500 vs 게임(450/-300)", "a": ["--a", "{W}", "--opts-a", "lmr2,hm", "--tune-a", "game,nt_me=450,nt_opp=-500"], "b": ["--b", "{W}", "--opts-b", "lmr2,hm", "--tune-b", "game"], "time_ms": 30, "max_games": 2000},
+ {"key": "nt1000_400", "note": "[순환] nt 1000/-400 vs 게임(450/-300)", "a": ["--a", "{W}", "--opts-a", "lmr2,hm", "--tune-a", "game,nt_me=1000,nt_opp=-400"], "b": ["--b", "{W}", "--opts-b", "lmr2,hm", "--tune-b", "game"], "time_ms": 30, "max_games": 2000},
+ {"key": "nt450_300_150ms", "note": "[순환] 게임(450/-300) vs 예전(300/-300), 150ms", "a": ["--a", "{W}", "--opts-a", "lmr2,hm", "--tune-a", "game"], "b": ["--b", "{W}", "--opts-b", "lmr2,hm", "--tune-b", "game,nt_me=300,nt_opp=-300"], "time_ms": 150, "max_games": 800}
 ]
