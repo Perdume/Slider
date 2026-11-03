@@ -106,7 +106,7 @@ def main():
     for key, ms, mg in (("final_30ms", 30, 2000), ("final_150ms", 150, 600)):
         if any(r.startswith(key) for r in st["results"]):
             continue
-        r = matchup(["--rules", "cycle", "--a", new_w, "--opts-a", OPTS, "--tune-a", tune, "--b", W, "--opts-b", "lmr2",
+        r = matchup(["--rules", "cycle", "--a", new_w, "--opts-a", OPTS, "--tune-a", tune, "--b", W, "--opts-b", OPTS,
                      "--tune-b", "game", "--games", mg, "--time-ms", ms, "--max-plies", 1000, "--sprt-elo0", 0,
                      "--sprt-elo1", 25, "--threads", THREADS, "--seed", 1001])
         st["results"].append(f"{key} 새 상수+가중치 vs 지금 게임 설정: {r['aWins']}승 {r['draws']}무 {r['bWins']}패 ({r['games']}판) "
