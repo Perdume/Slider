@@ -183,8 +183,7 @@ def main():
         hist_path.write_text(json.dumps(history, ensure_ascii=False, indent=1))
         if "vs_engine" in row or it % EVAL_EVERY == 0:
             put_attr("progress", msg)
-        if "vs_engine" in row:
-            sync()
+        sync()  # 매 반복 GCS 로 (Spot 회수 때 잃는 학습을 한 반복으로 줄임)
     engine.close()
     lines = [l for l in (OUT / "log.txt").read_text().splitlines() if "엔진 상대" in l or "Rust 엔진" in l or "사전학습" in l]
     put_attr("summary", "\n".join(lines[-80:]))
