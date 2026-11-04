@@ -105,6 +105,21 @@ details.rules summary { cursor: pointer; font-weight: 700; }
 details.rules ul { margin: 8px 0 0; padding-left: 18px; }
 .err { color: var(--warn); font-weight: 700; }
 footer { color: var(--muted); font-size: 12px; text-align: center; }
+.replay { display: flex; gap: 6px; align-items: center; justify-content: center; flex-wrap: wrap; }
+.replay button { min-width: 44px; height: 38px; border-radius: 6px; border: 1px solid var(--line); background: var(--panel); cursor: pointer; padding: 0 10px; }
+.replay button.back { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); font-weight: 500; }
+.replay .pos { font-family: var(--font-mono); font-size: 12px; color: var(--muted); min-width: 70px; text-align: center; font-variant-numeric: tabular-nums; }
+.saved { border-top: 1px solid var(--line); padding: 10px 14px 12px; display: grid; gap: 8px; }
+.saved .head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.saved .head b { font-size: 13px; }
+.saved .head button, .gitem button { border: 1px solid var(--line); background: var(--panel); border-radius: 6px; height: 30px; padding: 0 9px; cursor: pointer; font-size: 12px; }
+.saved .list { display: grid; gap: 4px; max-height: 220px; overflow-y: auto; }
+.gitem { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 6px; align-items: center; padding: 6px 8px; border-radius: 6px; background: var(--panel-2); font-size: 12.5px; }
+.gitem.on { outline: 2px solid var(--accent); }
+.gitem .t { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gitem .r { font-weight: 700; }
+.gitem .d { color: var(--muted); font-family: var(--font-mono); font-size: 11.5px; }
+.saved .note { color: var(--muted); font-size: 12px; }
 
 @media (max-width: 860px) { .main { grid-template-columns: minmax(0, 1fr); } .moves { max-height: 220px; } }
 @media (max-width: 420px) {
@@ -146,6 +161,14 @@ footer { color: var(--muted); font-size: 12px; text-align: center; }
         <svg class="board" id="board" viewBox="-34 -6 740 740" role="img" aria-label="보드"></svg>
       </div>
       <div class="player a" id="pa"><span class="dot">1</span><div><div class="name" id="nameA">A · 나</div><div class="sub">말 1(오른쪽 위) · 2(왼쪽 아래) · 먼저 둠</div></div><span class="turn">차례</span></div>
+      <div class="replay" id="replay" hidden>
+        <button id="rFirst" type="button" aria-label="처음">⏮</button>
+        <button id="rPrev" type="button" aria-label="이전 수">◀</button>
+        <span class="pos" id="rPos"></span>
+        <button id="rNext" type="button" aria-label="다음 수">▶</button>
+        <button id="rLast" type="button" aria-label="마지막">⏭</button>
+        <button id="rBack" type="button" class="back">대국으로 돌아가기</button>
+      </div>
     </div>
 
     <aside class="panel">
@@ -155,12 +178,17 @@ footer { color: var(--muted); font-size: 12px; text-align: center; }
         <div class="hint" id="sHint"></div>
       </div>
       <div class="moves" id="moves"><div class="empty">아직 둔 수가 없습니다.</div></div>
-      <details class="rules" open>
+      <div class="saved">
+        <div class="head"><b>저장된 판</b><span><button id="dlAll" type="button">전부 내려받기</button> <button id="clearAll" type="button">지우기</button></span></div>
+        <div class="list" id="savedList"></div>
+        <div class="note" id="savedNote">판이 끝나면 기보가 이 브라우저에 자동으로 저장됩니다 (최근 100판).</div>
+      </div>
+      <details class="rules">
         <summary>규칙과 두는 법</summary>
         <ul>
           <li>말은 하나씩 정해진 순서로 움직입니다: <b>1 → X → 2 → Y</b> → 1 …</li>
           <li>한 턴: 차례인 말이 타일 위를 원하는 만큼 걸은 뒤(다른 말은 못 지나감), 서 있는 타일째 빈 칸 쪽으로 미끄러집니다. 타일은 다른 타일이나 벽 앞에서 멈춥니다.</li>
-          <li>가운데 <b>골</b>에 먼저 멈추는 쪽이 이깁니다. 같은 국면이 3번 나오면 무승부.</li>
+          <li>가운데 <b>골</b>에 먼저 멈추는 쪽이 이깁니다. 수 제한은 없고, 같은 국면이 3번 나오면 무승부입니다.</li>
           <li>두는 법: 점(•)이 찍힌 타일을 눌러 출발할 타일을 고르고, 초록 원을 눌러 미끄러질 곳을 고릅니다. 처음에는 말이 서 있는 타일이 골라져 있습니다.</li>
         </ul>
       </details>
@@ -171,7 +199,7 @@ footer { color: var(--muted); font-size: 12px; text-align: center; }
 
 <script>
 "use strict";
-const N = 7, CS = 100, GOAL = 24, MAX_PLIES = 400;
+const N = 7, CS = 100, GOAL = 24;
 const LABEL = [["1", "2"], ["X", "Y"]];
 const ARROW = ["↑", "↓", "←", "→"];
 const START_ROWS = ["1100011", "1000001", "0000000", "0000000", "0000000", "1000001", "1100011"];
@@ -237,13 +265,123 @@ function afterPass(s) { const t = clone(s); t.next[s.side] ^= 1; t.side ^= 1; re
 
 function newGame() {
   makeWorker();
+  view = null; liveGame = null;
   const s = startState();
-  game = { states: [s], plies: [], hashes: [hashOf(s)], over: null, evalA: 0, info: null };
+  game = { states: [s], plies: [], hashes: [hashOf(s)], over: null, evalA: 0, info: null, nextInfo: null, seat: seatVal(), thinkMs: Number($("think").value) };
   selFrom = null;
   advance();
 }
 const seatVal = () => $("seat").value;
-const isHuman = side => seatVal() !== "watch" && Number(seatVal()) === side;
+const isHuman = side => !view && seatVal() !== "watch" && Number(seatVal()) === side;
+
+// ---------- 저장된 판 ----------
+const STORE_KEY = "slider.savedGames", STORE_MAX = 100;
+let view = null, liveGame = null;
+function loadSaved() {
+  try { const v = JSON.parse(localStorage.getItem(STORE_KEY) || "[]"); return Array.isArray(v) ? v : []; } catch (e) { return []; }
+}
+function storeSaved(list) {
+  try { localStorage.setItem(STORE_KEY, JSON.stringify(list.slice(-STORE_MAX))); return true; } catch (e) { return false; }
+}
+function gameRecord(g) {
+  return {
+    v: 1, id: Date.now(), date: new Date().toISOString(),
+    seat: g.seat, thinkMs: g.thinkMs,
+    winner: g.over.winner < 0 ? "draw" : g.over.winner === 0 ? "A" : "B", why: g.over.why,
+    plies: g.plies.length,
+    moves: g.plies.map(p => (p.pass ? null : p.m)),
+    notation: g.plies.map(notation),
+    ai: g.plies.map(p => (p.ai ? [p.ai.score, p.ai.depth] : null)),
+  };
+}
+function saveFinished() {
+  const list = loadSaved();
+  list.push(gameRecord(game));
+  const ok = storeSaved(list);
+  $("savedNote").textContent = ok ? "판이 끝나서 기보를 이 브라우저에 저장했습니다." : "이 브라우저에서는 저장할 수 없습니다 (비공개 창 등). 내려받기로 보관하세요.";
+  if (!ok) lastUnsaved = gameRecord(game);
+  drawSaved();
+}
+let lastUnsaved = null;
+function seatLabel(seat) { return seat === "watch" ? "관전" : seat === "0" ? "나 A" : "나 B"; }
+function resultLabel(r) {
+  if (r.winner === "draw") return "무승부";
+  if (r.seat === "watch") return `${r.winner} 승`;
+  const mine = (r.seat === "0" && r.winner === "A") || (r.seat === "1" && r.winner === "B");
+  return mine ? "내가 이김" : "AI 가 이김";
+}
+function fmtDate(iso) {
+  const d = new Date(iso), p = n => String(n).padStart(2, "0");
+  return `${d.getMonth() + 1}/${d.getDate()} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+function download(name, obj) {
+  const blob = new Blob([JSON.stringify(obj, null, 1)], { type: "application/json" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob); a.download = name;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+}
+function fileStamp(iso) { const d = new Date(iso), p = n => String(n).padStart(2, "0"); return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}`; }
+function drawSaved() {
+  const list = loadSaved().slice().reverse(), box = $("savedList");
+  box.innerHTML = "";
+  if (!list.length) { box.innerHTML = '<div class="note">아직 저장된 판이 없습니다.</div>'; return; }
+  list.forEach(r => {
+    const row = document.createElement("div");
+    row.className = "gitem" + (view && view.rec.id === r.id ? " on" : "");
+    row.innerHTML = `<span class="t"><span class="r"></span> <span class="d"></span></span><button type="button">보기</button><button type="button">↓</button>`;
+    row.querySelector(".r").textContent = resultLabel(r);
+    row.querySelector(".d").textContent = `${fmtDate(r.date)} · ${seatLabel(r.seat)} · ${r.plies}수`;
+    const [bView, bDl] = row.querySelectorAll("button");
+    bView.addEventListener("click", () => openView(r));
+    bDl.setAttribute("aria-label", "내려받기");
+    bDl.addEventListener("click", () => download(`slider_${fileStamp(r.date)}.json`, r));
+    box.appendChild(row);
+  });
+}
+function rebuild(rec) {
+  // 저장된 수를 처음부터 다시 두어 국면들을 만든다
+  let s = startState();
+  const states = [s], plies = [];
+  rec.moves.forEach((m, i) => {
+    const r = record(s, m);
+    if (rec.ai && rec.ai[i]) r.ai = { score: rec.ai[i][0], depth: rec.ai[i][1] };
+    plies.push(r);
+    s = m === null ? afterPass(s) : afterMove(s, m);
+    states.push(s);
+  });
+  return { states, plies };
+}
+function showView(idx) {
+  const { rec, full } = view;
+  view.idx = Math.max(0, Math.min(full.plies.length, idx));
+  const i = view.idx;
+  // 이 수까지 둔 쪽들 중 마지막 AI 점수로 형세 막대
+  let evalA = 0, info = null;
+  for (let k = i - 1; k >= 0; k--) {
+    const p = full.plies[k];
+    if (p.ai) { evalA = p.side === 0 ? p.ai.score : -p.ai.score; info = { side: p.side, score: p.ai.score, depth: p.ai.depth, nodes: null }; break; }
+  }
+  const end = i === full.plies.length;
+  game = {
+    states: full.states.slice(0, i + 1), plies: full.plies.slice(0, i), hashes: [],
+    over: end ? { winner: rec.winner === "draw" ? -1 : rec.winner === "A" ? 0 : 1, why: rec.why } : null,
+    evalA, info, seat: rec.seat, thinkMs: rec.thinkMs,
+  };
+  render();
+}
+function openView(rec) {
+  if (!view) { makeWorker(); liveGame = game; }
+  view = { rec, full: rebuild(rec), idx: 0 };
+  showView(rec.moves.length);
+  drawSaved();
+}
+function closeView() {
+  if (!view) return;
+  view = null; game = liveGame; liveGame = null; selFrom = null;
+  drawSaved();
+  advance();
+}
 const cur = () => game.states[game.states.length - 1];
 
 function record(s, m) {
@@ -254,6 +392,7 @@ function record(s, m) {
 function play(m) {
   const s = cur();
   const rec = record(s, m);
+  if (game.nextInfo) { rec.ai = game.nextInfo; game.nextInfo = null; }
   const t = m === null ? afterPass(s) : afterMove(s, m);
   game.plies.push(rec);
   game.states.push(t);
@@ -262,7 +401,7 @@ function play(m) {
   selFrom = null;
   if (m !== null && mvDest(m) === GOAL) game.over = { winner: rec.side, why: `${LABEL[rec.side][rec.piece]} 이(가) 골에 도착` };
   else if (game.hashes.filter(x => x === h).length >= 3) game.over = { winner: -1, why: "같은 국면 3번 반복" };
-  else if (game.plies.length >= MAX_PLIES) game.over = { winner: -1, why: `${MAX_PLIES}수 제한` };
+  if (game.over) saveFinished();
   advance();
 }
 
@@ -288,6 +427,7 @@ function aiMove(s) {
     workerBusy = false;
     const { mv, score, depth, nodes } = e.data;
     game.info = { side: s.side, score, depth, nodes };
+    game.nextInfo = { score, depth };
     game.evalA = s.side === 0 ? score : -score;
     play(mv < 0 ? null : mv);
   };
@@ -296,7 +436,7 @@ function aiMove(s) {
 }
 
 function undo() {
-  if (!game || game.plies.length === 0) return;
+  if (!game || view || game.plies.length === 0) return;
   makeWorker();
   // 내 차례가 다시 올 때까지 (내가 둔 수 하나 포함) 되돌린다
   do {
@@ -437,8 +577,14 @@ function drawEval() {
 function drawStatus() {
   const s = cur(), big = $("sBig"), meta = $("sMeta"), hint = $("sHint");
   big.classList.toggle("end", !!game.over);
-  const who = side => (seatVal() === "watch" ? (side === 0 ? "A" : "B") : isHuman(side) ? "나" : "AI");
-  if (game.over) {
+  const seatNow = view ? game.seat : seatVal();
+  const who = side => (seatNow === "watch" ? (side === 0 ? "A" : "B") : Number(seatNow) === side ? "나" : "AI");
+  $("replay").hidden = !view;
+  if (view) {
+    $("rPos").textContent = `${view.idx} / ${view.full.plies.length}수`;
+    big.textContent = `지난 판 보기 · ${fmtDate(view.rec.date)} · ${resultLabel(view.rec)}`;
+    hint.textContent = view.idx === view.full.plies.length ? `끝: ${view.rec.why}` : "◀ ▶ 로 한 수씩 넘겨 보세요. 키보드 ← → 도 됩니다.";
+  } else if (game.over) {
     if (game.over.winner < 0) big.textContent = `무승부 · ${game.over.why}`;
     else big.textContent = `${who(game.over.winner)} 승리 (${game.over.winner === 0 ? "A" : "B"}) · ${game.over.why}`;
     hint.textContent = "새 게임을 누르면 다시 시작합니다. 무르기로 되돌려 볼 수도 있습니다.";
@@ -452,25 +598,51 @@ function drawStatus() {
   const info = game.info;
   if (info) {
     const sc = info.score >= WINB ? "이김 확정" : info.score <= -WINB ? "짐 확정" : (info.score >= 0 ? "+" : "") + (info.score / 100).toFixed(2);
-    meta.textContent = `마지막 AI 수 (${info.side === 0 ? "A" : "B"}) · 형세 ${sc} · 깊이 ${info.depth} · 노드 ${Math.round(info.nodes).toLocaleString("ko-KR")}`;
+    const nodes = info.nodes == null ? "" : ` · 노드 ${Math.round(info.nodes).toLocaleString("ko-KR")}`;
+    meta.textContent = `마지막 AI 수 (${info.side === 0 ? "A" : "B"}) · 형세 ${sc} · 깊이 ${info.depth}${nodes}`;
   } else meta.textContent = "";
   const done = !!game.over;
   $("pa").classList.toggle("on", !done && s.side === 0);
   $("pb").classList.toggle("on", !done && s.side === 1);
-  const seat = seatVal();
+  const seat = seatNow;
   $("nameA").textContent = seat === "watch" ? "A · AI" : seat === "0" ? "A · 나" : "A · AI";
   $("nameB").textContent = seat === "watch" ? "B · AI" : seat === "1" ? "B · 나" : "B · AI";
-  $("undo").disabled = seat === "watch" || !game.plies.some(p => isHuman(p.side));
+  $("undo").disabled = !!view || seat === "watch" || !game.plies.some(p => isHuman(p.side));
 }
 function render() { if (!game || !E) return; drawBoard(); drawMoves(); drawEval(); drawStatus(); }
 
-$("newgame").addEventListener("click", newGame);
+$("newgame").addEventListener("click", () => { newGame(); drawSaved(); });
 $("undo").addEventListener("click", undo);
+$("rFirst").addEventListener("click", () => view && showView(0));
+$("rPrev").addEventListener("click", () => view && showView(view.idx - 1));
+$("rNext").addEventListener("click", () => view && showView(view.idx + 1));
+$("rLast").addEventListener("click", () => view && showView(view.full.plies.length));
+$("rBack").addEventListener("click", closeView);
+document.addEventListener("keydown", e => {
+  if (!view || e.target.tagName === "SELECT") return;
+  if (e.key === "ArrowRight") { showView(view.idx + 1); e.preventDefault(); }
+  else if (e.key === "ArrowLeft") { showView(view.idx - 1); e.preventDefault(); }
+  else if (e.key === "Home") { showView(0); e.preventDefault(); }
+  else if (e.key === "End") { showView(view.full.plies.length); e.preventDefault(); }
+});
+$("dlAll").addEventListener("click", () => {
+  const list = loadSaved();
+  if (lastUnsaved && !list.some(r => r.id === lastUnsaved.id)) list.push(lastUnsaved);
+  if (!list.length) { $("savedNote").textContent = "내려받을 판이 없습니다."; return; }
+  download(`slider_games_${fileStamp(new Date().toISOString())}.json`, { games: list });
+});
+let clearArmed = false;
+$("clearAll").addEventListener("click", () => {
+  if (!clearArmed) { clearArmed = true; $("clearAll").textContent = "한 번 더 누르면 지움"; setTimeout(() => { clearArmed = false; $("clearAll").textContent = "지우기"; }, 3000); return; }
+  clearArmed = false; $("clearAll").textContent = "지우기";
+  storeSaved([]); if (view) closeView(); drawSaved();
+  $("savedNote").textContent = "저장된 판을 모두 지웠습니다.";
+});
 $("seat").addEventListener("change", newGame);
 window.matchMedia("(prefers-color-scheme: dark)").addEventListener?.("change", render);
 new MutationObserver(render).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
 
-loadWasm().then(ex => { E = ex; WINB = E.win_bound(); newGame(); })
+loadWasm().then(ex => { E = ex; WINB = E.win_bound(); newGame(); drawSaved(); })
   .catch(err => { $("sBig").innerHTML = '<span class="err">엔진을 불러오지 못했습니다</span>'; $("sHint").textContent = String(err); });
 </script>
 
