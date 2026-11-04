@@ -31,7 +31,18 @@ ENGINE_TIME_MS = 30
 PRETRAIN_STEPS = int(E("PRETRAIN_STEPS", 12000))
 GAMES = int(E("GAMES", 512))
 SIMULATIONS = int(E("SIMULATIONS", 32))
-MAX_LEN = 300
+MAX_LEN = int(E("MAX_LEN", 1000))  # 사실상 제한 없음 (판은 골 / 3회 반복으로 끝남, 모든 판이 끝나면 바로 멈춤)
+GAMMA = float(E("GAMMA", 0.995))  # 이기는 보상을 남은 수만큼 할인 (빨리 이길수록 큼)
+# 역방향 커리큘럼: 판의 CURR_FRAC 은 엔진 판의 막판 국면(끝까지 CURR_K 수 이하)에서 시작.
+# 그 판들에서 이길 쪽이 실제로 이긴 비율이 CURR_PASS 이상이면 CURR_K 를 CURR_STEP 만큼 늘린다.
+CURR_FRAC = float(E("CURR_FRAC", 0.5))
+CURR_START = int(E("CURR_START", 4))
+CURR_STEP = int(E("CURR_STEP", 4))
+CURR_PASS = float(E("CURR_PASS", 0.75))
+CURR_MAX = int(E("CURR_MAX", 400))
+# 멈춤 기준: 이어 시작한 뒤 STOP_AFTER 반복 동안 엔진 상대 최고 점수가 STOP_SCORE 미만이면 끝낸다
+STOP_AFTER = int(E("STOP_AFTER", 30))
+STOP_SCORE = float(E("STOP_SCORE", 0.2))
 DRAW_THRESHOLD = 0.2
 LR = 1e-3
 TRAIN_STEPS = 200
@@ -98,8 +109,9 @@ def main():
             tmp.rename(path)
             log(f"엔진 판 {n_games}개 만듦 ({time.time() - t0:.0f}초)")
         eng_files.append(str(path))
-    E_obs, E_act, E_z = eb.load_engine_data(eng_files)
-    log(f"엔진 판 국면: {len(E_act)}")
+    az.SEARCH_GAMMA = GAMMA
+    E_obs, E_act, E_z, pool = eb.load_engine_data(eng_files, gamma=GAMMA, with_starts=True)
+    log(f"엔진 판 국면: {len(E_act)} | 커리큘럼 시작 국면 {len(pool['z'])} | 할인 {GAMMA} | 수 제한 {MAX_LEN}")
 
     ckpt = OUT / f"ckpt_{TAG}.pkl"
     hist_path = OUT / f"history_{TAG}.json"
@@ -136,13 +148,24 @@ def main():
     if RL_UNTIL > 0:
         deadline = min(deadline, RL_UNTIL)
     it = start_it
+    curr_k = next((h["curr_k"] for h in reversed(history) if "curr_k" in h), CURR_START)
+    n_c = int(GAMES * CURR_FRAC)
+    import slider_jax as sj
+    base = [np.broadcast_to(np.asarray(x, bool), (GAMES - n_c, sj.N)) for x in
+            (sj.START_TILES, sj.CYCLE_P0, sj.CYCLE_P1, sj.CYCLE_C0, sj.CYCLE_C1)]
+    best_engine = 0.0
     while time.time() < deadline:
         t0 = time.time()
         key, k_play, k_eval = jax.random.split(key, 3)
+        cand = np.nonzero((pool["remaining"] >= 1) & (pool["remaining"] <= curr_k))[0]
+        idx = rng.choice(cand, size=n_c, replace=len(cand) < n_c)
+        start = tuple(np.concatenate([pool["state"][j][idx], base[j]]) for j in range(5))
+        expect = np.where(pool["z"][idx] > 0, 0, 1)  # 시작 국면에서 둘 차례인 쪽(0)이 이길 판이면 0
         obs, pi, active, winner = az.self_play(params, k_play, batch=GAMES, num_simulations=SIMULATIONS, max_len=MAX_LEN,
-                                               draw_threshold=DRAW_THRESHOLD)
-        obs, pi, active, winner = (np.asarray(x) for x in (obs, pi, active, winner))
-        z = az.value_targets(active, winner)
+                                               draw_threshold=DRAW_THRESHOLD, start=start)
+        z = az.value_targets(active, winner, GAMMA)
+        curr_success = float((winner[:n_c] == expect).mean()) if n_c else 0.0
+        act_n, win_n = active[:, n_c:], winner[n_c:]
         replay.append((obs[active].astype(np.uint8), pi[active].astype(np.float16), z[active]))
         replay = replay[-REPLAY:]
         X = np.concatenate([r[0] for r in replay])
@@ -160,9 +183,12 @@ def main():
             losses.append((float(pl), float(vl)))
         it += 1
         pl, vl = np.mean(losses, axis=0)
-        row = {"iteration": it, "avg_len": float(active.sum(0).mean()), "first_win": float((winner == 0).mean()),
-               "second_win": float((winner == 1).mean()), "draw": float((winner < 0).mean()), "policy_loss": float(pl),
-               "value_loss": float(vl)}
+        row = {"iteration": it, "avg_len": float(act_n.sum(0).mean()), "first_win": float((win_n == 0).mean()),
+               "second_win": float((win_n == 1).mean()), "draw": float((win_n < 0).mean()), "policy_loss": float(pl),
+               "value_loss": float(vl), "curr_k": curr_k, "curr_success": curr_success, "gamma": GAMMA,
+               "max_ply": int(active.sum(0).max())}
+        if curr_success >= CURR_PASS and curr_k < CURR_MAX:
+            curr_k = min(CURR_MAX, curr_k + CURR_STEP)
         if it % EVAL_EVERY == 0:
             w, d, l = (int(x) for x in az.evaluate(params, k_eval, batch=EVAL_GAMES, num_simulations=SIMULATIONS, max_len=MAX_LEN,
                                                    opponent="greedy", draw_threshold=DRAW_THRESHOLD))
@@ -173,7 +199,7 @@ def main():
         row["sec"] = time.time() - t0
         history.append(row)
         msg = (f"[{it}] {row['sec']:.0f}s | 평균 {row['avg_len']:.0f}수, 선승 {row['first_win']:.0%} 후승 {row['second_win']:.0%} "
-               f"무 {row['draw']:.0%} | 손실 정책 {pl:.3f} 가치 {vl:.3f}")
+               f"무 {row['draw']:.0%} (최장 {row['max_ply']}) | 손실 정책 {pl:.3f} 가치 {vl:.3f} | 막판 {row['curr_k']}수 이내 성공 {curr_success:.0%}")
         if "vs_greedy" in row:
             msg += f" | 전술 상대 {row['vs_greedy']} ({row['vs_greedy_score']:.2f})"
         if "vs_engine" in row:
@@ -184,6 +210,11 @@ def main():
         if "vs_engine" in row or it % EVAL_EVERY == 0:
             put_attr("progress", msg)
         sync()  # 매 반복 GCS 로 (Spot 회수 때 잃는 학습을 한 반복으로 줄임)
+        if "vs_engine" in row:
+            best_engine = max(best_engine, row["vs_engine_score"])
+        if it - start_it >= STOP_AFTER and best_engine < STOP_SCORE:
+            log(f"멈춤: {STOP_AFTER}반복 동안 엔진 상대 최고 {best_engine:.2f} < {STOP_SCORE}")
+            break
     engine.close()
     lines = [l for l in (OUT / "log.txt").read_text().splitlines() if "엔진 상대" in l or "Rust 엔진" in l or "사전학습" in l]
     put_attr("summary", "\n".join(lines[-80:]))

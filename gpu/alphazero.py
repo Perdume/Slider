@@ -6,7 +6,8 @@
 - 수 197개 = 칸(49) x 방향(4) (움직일 말은 정해져 있다) + 통과(둘 수 있는 수가 없을 때만).
 - 신경망 입력: 타일 / 내 말 / 상대 말 / mc / oc (49칸씩 245개). 출력: 수마다의 확률(정책), 이길 확률(가치, -1..1).
 - 한 반복 = 판 B개를 동시에 MCTS(mctx 의 Gumbel MuZero 정책)로 끝까지 두고 -> 그 기록으로 신경망 학습.
-- 승패: 이기면 +1, 지면 -1, 무승부(같은 국면 3번, 또는 MAX_LEN 수) 0.
+- 승패: 이기면 +1, 지면 -1, 무승부(같은 국면 3번, 또는 MAX_LEN 수) 0. GAMMA < 1 이면 이기는 보상을 남은 수만큼 할인.
+- 역방향 커리큘럼: self_play(start=...) 로 엔진 판의 막판 국면에서 시작할 수 있다.
 """
 import functools
 import pickle
@@ -23,6 +24,9 @@ import slider_jax as sj
 A = sj.NUM_TURN_MOVES + 1  # 마지막 = 통과
 PASS = sj.NUM_TURN_MOVES
 OBS = 5 * sj.N
+# 할인율: 이기는 보상을 GAMMA^(남은 수) 로 줄인다 (빨리 이길수록 큰 보상). 1.0 이면 할인 없음.
+# MCTS 안에서도 같은 할인을 쓰도록 SEARCH_GAMMA 를 맞춘다. jit 전에 (첫 호출 전에) 바꿔야 한다.
+SEARCH_GAMMA = 1.0
 
 
 # ------------------------------------------------------------------ 게임
@@ -147,7 +151,7 @@ def recurrent_fn(params, rng, action, emb):
     logits, value = apply_net(params, jax.vmap(observe)(nt, nme, nopp, nmc, noc))
     logits = masked_logits(logits, jax.vmap(legal_mask)(nt, nme, nopp, nmc))
     value = jnp.where(new_done, 0.0, value)
-    discount = jnp.where(new_done, 0.0, -1.0)  # 두 사람이 번갈아 두므로 가치의 부호가 바뀐다
+    discount = jnp.where(new_done, 0.0, -SEARCH_GAMMA)  # 두 사람이 번갈아 두므로 가치의 부호가 바뀐다 (빨리 이길수록 크게: 할인)
     out = mctx.RecurrentFnOutput(reward=reward, discount=discount, prior_logits=logits, value=value)
     return out, (nt, nme, nopp, nmc, noc, new_done)
 
@@ -195,11 +199,15 @@ def choose_action(params, key, tiles, me, opp, mc, oc, hist, ply, num_simulation
 
 
 # ------------------------------------------------------------------ 판 진행 (B 판 동시, 최대 max_len 수)
-def _start(batch, max_len):
-    b = lambda x: jnp.broadcast_to(x, (batch, sj.N))
-    h0 = sj.turn_hash(sj.START_TILES, sj.CYCLE_P0, sj.CYCLE_P1, sj.CYCLE_C0, sj.CYCLE_C1)
+def _start(batch, max_len, start=None):
+    """판 B개의 시작 국면. start = (tiles, me, opp, mc, oc) 각각 [B, N] 이면 그 국면들에서 (역방향 커리큘럼), 없으면 처음 배치."""
+    if start is None:
+        b = lambda x: jnp.broadcast_to(x, (batch, sj.N))
+        start = (b(sj.START_TILES), b(sj.CYCLE_P0), b(sj.CYCLE_P1), b(sj.CYCLE_C0), b(sj.CYCLE_C1))
+    tiles, me, opp, mc, oc = (jnp.asarray(x) for x in start)
+    h0 = jax.vmap(sj.turn_hash)(tiles, me, opp, mc, oc)
     hist = jnp.zeros((batch, max_len + 1, 2), jnp.uint32).at[:, 0].set(h0)
-    return b(sj.START_TILES), b(sj.CYCLE_P0), b(sj.CYCLE_P1), b(sj.CYCLE_C0), b(sj.CYCLE_C1), hist
+    return tiles, me, opp, mc, oc, hist
 
 
 def _advance(tiles, me, opp, mc, oc, hist, done, winner, ply, action, max_len):
@@ -214,29 +222,48 @@ def _advance(tiles, me, opp, mc, oc, hist, done, winner, ply, action, max_len):
     return (keep(tiles, nt), keep(me, nme), keep(opp, nopp), keep(mc, nmc), keep(oc, noc), hist, done | win | rep, winner)
 
 
-@functools.partial(jax.jit, static_argnames=("batch", "num_simulations", "max_len", "draw_threshold"))
-def self_play(params, rng, batch, num_simulations, max_len, draw_threshold=None):
-    """B 판을 끝까지 둔다. 반환: 입력[T,B,OBS], 정책 목표[T,B,A], 그 수에서 둘 차례였는지[T,B], 승자[B] (-1 무승부, 0 먼저, 1 나중)."""
-    init = (*_start(batch, max_len), jnp.zeros(batch, bool), jnp.full(batch, -1, jnp.int32))
-
+@functools.partial(jax.jit, static_argnames=("num_simulations", "max_len", "draw_threshold", "chunk"))
+def _play_chunk(params, carry, ply0, keys, num_simulations, max_len, draw_threshold, chunk):
     def body(carry, inp):
         tiles, me, opp, mc, oc, hist, done, winner = carry
         ply, key = inp
         action, out = choose_action(params, key, tiles, me, opp, mc, oc, hist, ply, num_simulations, max_len, draw_threshold)
-        rec = (jax.vmap(observe)(tiles, me, opp, mc, oc), out.action_weights, ~done)
+        rec = (jax.vmap(observe)(tiles, me, opp, mc, oc).astype(jnp.uint8), out.action_weights.astype(jnp.float16), ~done)
         new = _advance(tiles, me, opp, mc, oc, hist, done, winner, ply, action, max_len)
         return new, rec
 
-    keys = jax.random.split(rng, max_len)
-    final, (obs, pi, active) = jax.lax.scan(body, init, (jnp.arange(max_len), keys))
-    return obs, pi, active, final[7]
+    return jax.lax.scan(body, carry, (ply0 + jnp.arange(chunk), keys))
 
 
-def value_targets(active, winner):
-    """수마다 둘 차례였던 쪽에서 본 결과: 이김 +1, 짐 -1, 무승부 0."""
+def self_play(params, rng, batch, num_simulations, max_len, draw_threshold=None, start=None, chunk=50):
+    """B 판을 끝까지 둔다 (최대 max_len 수, 그 전에 모든 판이 끝나면 멈춤). start 를 주면 그 국면들에서 시작.
+    반환: 입력[T,B,OBS] uint8, 정책 목표[T,B,A] float16, 그 수에서 둘 차례였는지[T,B], 승자[B]
+    (-1 무승부, 0 시작 국면에서 둘 차례였던 쪽, 1 그 상대)."""
+    carry = (*_start(batch, max_len, start), jnp.zeros(batch, bool), jnp.full(batch, -1, jnp.int32))
+    obs, pi, active = [], [], []
+    ply = 0
+    while ply < max_len:
+        n = min(chunk, max_len - ply)
+        rng, k = jax.random.split(rng)
+        carry, (o, p, a) = _play_chunk(params, carry, jnp.int32(ply), jax.random.split(k, chunk), num_simulations, max_len,
+                                       draw_threshold, chunk)
+        o, p, a = np.asarray(o)[:n], np.asarray(p)[:n], np.asarray(a)[:n]
+        obs.append(o); pi.append(p); active.append(a)
+        ply += n
+        if bool(np.asarray(carry[6]).all()):
+            break
+    return np.concatenate(obs), np.concatenate(pi), np.concatenate(active), np.asarray(carry[7])
+
+
+def value_targets(active, winner, gamma=1.0):
+    """수마다 둘 차례였던 쪽에서 본 결과: 이김 +1, 짐 -1, 무승부 0. gamma < 1 이면 판 끝까지 남은 수만큼 할인 (빨리 이길수록 큼)."""
     T = active.shape[0]
     mover = (np.arange(T) % 2)[:, None]
     z = np.where(winner[None] < 0, 0.0, np.where(winner[None] == mover, 1.0, -1.0))
+    if gamma < 1.0:
+        length = active.sum(0)[None]                     # 판마다 둔 수
+        remaining = np.maximum(length - 1 - np.arange(T)[:, None], 0)
+        z = z * gamma ** remaining
     return z.astype(np.float32)
 
 
@@ -283,12 +310,10 @@ def random_policy(tiles, me, opp, mc, oc, key):
     return jnp.where(valid.any(), jnp.argmax(score), PASS)
 
 
-@functools.partial(jax.jit, static_argnames=("batch", "num_simulations", "max_len", "opponent", "draw_threshold"))
-def evaluate(params, rng, batch, num_simulations, max_len, opponent, draw_threshold=None):
-    """신경망+MCTS 가 판의 절반은 먼저, 절반은 나중에 둔다. 반환: (이긴 판, 무승부, 진 판)."""
+@functools.partial(jax.jit, static_argnames=("num_simulations", "max_len", "opponent", "draw_threshold", "chunk"))
+def _eval_chunk(params, carry, ply0, keys, agent_first, num_simulations, max_len, opponent, draw_threshold, chunk):
     opp_policy = greedy_policy if opponent == "greedy" else random_policy
-    agent_first = jnp.arange(batch) % 2 == 0
-    init = (*_start(batch, max_len), jnp.zeros(batch, bool), jnp.full(batch, -1, jnp.int32))
+    batch = agent_first.shape[0]
 
     def body(carry, inp):
         tiles, me, opp, mc, oc, hist, done, winner = carry
@@ -300,8 +325,23 @@ def evaluate(params, rng, batch, num_simulations, max_len, opponent, draw_thresh
         action = jnp.where(agent_turn, mcts_action, other)
         return _advance(tiles, me, opp, mc, oc, hist, done, winner, ply, action, max_len), None
 
-    final, _ = jax.lax.scan(body, init, (jnp.arange(max_len), jax.random.split(rng, max_len)))
-    winner = final[7]
+    carry, _ = jax.lax.scan(body, carry, (ply0 + jnp.arange(chunk), keys))
+    return carry
+
+
+def evaluate(params, rng, batch, num_simulations, max_len, opponent, draw_threshold=None, chunk=50):
+    """신경망+MCTS 가 판의 절반은 먼저, 절반은 나중에 둔다. 반환: (이긴 판, 무승부, 진 판)."""
+    agent_first = jnp.arange(batch) % 2 == 0
+    carry = (*_start(batch, max_len), jnp.zeros(batch, bool), jnp.full(batch, -1, jnp.int32))
+    ply = 0
+    while ply < max_len:
+        rng, k = jax.random.split(rng)
+        carry = _eval_chunk(params, carry, jnp.int32(ply), jax.random.split(k, chunk), agent_first, num_simulations, max_len,
+                            opponent, draw_threshold, chunk)
+        ply += chunk
+        if bool(np.asarray(carry[6]).all()):
+            break
+    winner = carry[7]
     agent_side = jnp.where(agent_first, 0, 1)
     return (winner == agent_side).sum(), (winner < 0).sum(), ((winner >= 0) & (winner != agent_side)).sum()
 

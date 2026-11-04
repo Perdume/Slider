@@ -33,24 +33,44 @@ def rust_move_to_action(m, me_mask=None):
     return int((m & 63) * 4 + ((m >> 6) & 3))
 
 
-def load_engine_data(paths):
+def load_engine_data(paths, gamma=1.0, with_starts=False):
     """(입력 uint8[N,245], 수 번호 int32[N], 가치 목표 float32[N]: 이김 +1 / 무 0 / 짐 -1).
-    순환 규칙 데이터 (selfplay --rules cycle --positions yes, 줄마다 mc / oc 가 있음) 만 읽는다."""
-    obs, act, z = [], [], []
-    for p in paths:
+    순환 규칙 데이터 (selfplay --rules cycle --positions yes, 줄마다 mc / oc 가 있음) 만 읽는다.
+    gamma < 1 이면 가치 목표를 판 끝까지 남은 수만큼 할인한다.
+    with_starts 면 역방향 커리큘럼용 시작 국면 묶음도 돌려준다: 승부가 난 판의 국면들
+    {"state": (tiles, me, opp, mc, oc) 각 bool[M,49], "remaining": 판 끝까지 남은 수 int32[M], "z": 둘 차례 쪽 결과 +1/-1}."""
+    rows = []
+    for fi, p in enumerate(paths):
         with open(p) as f:
             for line in f:
                 r = json.loads(line)
                 if "move" not in r or "mc" not in r or r["mc"] == r["me"]:
                     continue
-                t, me, op = bits_to_mask(r["tiles"]), bits_to_mask(r["me"]), bits_to_mask(r["opp"])
-                mc, oc = bits_to_mask(r["mc"]), bits_to_mask(r["oc"])
-                obs.append(np.concatenate([t, me, op, mc, oc]).astype(np.uint8))
-                act.append(rust_move_to_action(r["move"]))
-                z.append(2.0 * r["outcome"] - 1.0)
-    if not obs:
+                rows.append((fi, r))
+    if not rows:
         raise ValueError(f"순환 규칙 엔진 판이 없습니다 (예전 규칙 파일인지 확인): {paths}")
-    return np.stack(obs), np.array(act, np.int32), np.array(z, np.float32)
+    last = {}
+    for fi, r in rows:
+        k = (fi, r["game"])
+        last[k] = max(last.get(k, -1), r["ply"])
+    obs, act, z, rem, states = [], [], [], [], []
+    for fi, r in rows:
+        t, me, op = bits_to_mask(r["tiles"]), bits_to_mask(r["me"]), bits_to_mask(r["opp"])
+        mc, oc = bits_to_mask(r["mc"]), bits_to_mask(r["oc"])
+        obs.append(np.concatenate([t, me, op, mc, oc]).astype(np.uint8))
+        act.append(rust_move_to_action(r["move"]))
+        z.append(2.0 * r["outcome"] - 1.0)
+        rem.append(last[(fi, r["game"])] - r["ply"])
+        if with_starts:
+            states.append((t, me, op, mc, oc))
+    obs, act, z, rem = np.stack(obs), np.array(act, np.int32), np.array(z, np.float32), np.array(rem, np.int32)
+    zt = (z * gamma ** rem).astype(np.float32) if gamma < 1.0 else z
+    if not with_starts:
+        return obs, act, zt
+    decisive = np.nonzero(z != 0)[0]
+    starts = {"state": tuple(np.stack([states[i][j] for i in decisive]) for j in range(5)),
+              "remaining": rem[decisive], "z": z[decisive]}
+    return obs, act, zt, starts
 
 
 def pretrain(params, opt_state, opt, obs, act, z, steps, batch=1024, seed=0, log_every=500):
