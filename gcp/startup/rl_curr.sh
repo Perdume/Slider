@@ -1,6 +1,6 @@
 #!/bin/bash
-# Slider GPU 강화학습 (할인 + 역방향 커리큘럼 + 수 제한 없는 자가대전). 끝나면(성공/실패) 결과를 guest attribute 와 GCS 에 남기고 VM 을 끈다.
-export HOME=/root BUCKET=slider-rl-eminent-glider RL_HOURS=10 RL_UNTIL=1793807940 SIMULATIONS=128 GAMES=256 GAMMA=0.995 CURR_FRAC=0.5
+# Slider GPU 강화학습 (할인 + 역방향 커리큘럼 + 수 제한 없는 자가대전, 3회 반복 무승부). 끝나면(성공/실패) 결과를 guest attribute 와 GCS 에 남기고 VM 을 끈다.
+export HOME=/root BUCKET=slider-rl-eminent-glider RL_HOURS=10 RL_UNTIL=1793808060 SIMULATIONS=128 GAMES=256 GAMMA=0.995 CURR_FRAC=0.5
 cd /root
 put_attr() {
   curl -s -X PUT --data-binary @- -H "Metadata-Flavor: Google" \
