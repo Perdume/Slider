@@ -2,7 +2,7 @@
 # GPU 강화학습 VM 이 없으면(끝났거나 Spot 회수) GCS 저장 파일에서 이어받는 VM 을 띄운다. END_AT(UTC) 까지만.
 # 환경변수: END_AT (예 2026-11-05T01:00:00Z), STARTUP (startup/ 안의 시작 스크립트 이름, 기본 rl_curr.sh)
 G="${GCLOUD:-gcloud}"; [ -n "${CLOUDSDK_AUTH_ACCESS_TOKEN:-}" ] && G="env -u CLOUDSDK_AUTH_ACCESS_TOKEN $G"; PR="--project eminent-glider-465204-b2"; HERE="$(cd "$(dirname "$0")" && pwd)"; SG="${SG:-$HERE/startup}"; LEDGER="${LEDGER:-$HOME/slider_cost_ledger.txt}"
-END=$(date -u -d "${END_AT:-2026-11-04T15:52:00Z}" +%s); NOW=$(date -u +%s)
+END=$(date -u -d "${END_AT:-2026-11-04T15:59:00Z}" +%s); NOW=$(date -u +%s)
 line=$($G compute instances list $PR --filter="name=slider-gpu" --format="value(zone.basename(),status)")
 zone=${line%%[[:space:]]*}; st=${line##*[[:space:]]}
 if [ "$st" = RUNNING ] || [ "$st" = STAGING ] || [ "$st" = PROVISIONING ]; then echo "GPU VM 실행 중 ($zone)"; exit 0; fi

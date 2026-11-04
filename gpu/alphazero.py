@@ -267,6 +267,82 @@ def value_targets(active, winner, gamma=1.0):
     return z.astype(np.float32)
 
 
+# ------------------------------------------------------------------ 수 제한 없는 자가대전 (끝난 자리는 바로 새 판)
+@functools.partial(jax.jit, static_argnames=("num_simulations", "chunk"))
+def _cont_chunk(params, carry, keys, num_simulations, chunk):
+    """슬롯 B개에서 chunk 수를 둔다. 반복 무승부 없이 골에 닿아야 끝난다. 끝난 슬롯은 쉬다가 바깥에서 새 판으로 바꾼다."""
+    def body(carry, key):
+        tiles, me, opp, mc, oc, done = carry
+        out = run_mcts(params, key, tiles, me, opp, mc, oc, num_simulations)
+        obs = jax.vmap(observe)(tiles, me, opp, mc, oc).astype(jnp.uint8)
+        nt, nme, nopp, nmc, noc, _, win = jax.vmap(step)(tiles, me, opp, mc, oc, out.action)
+        keep = lambda old, new: jnp.where(done.reshape((-1,) + (1,) * (new.ndim - 1)), old, new)
+        new = (keep(tiles, nt), keep(me, nme), keep(opp, nopp), keep(mc, nmc), keep(oc, noc), done | win)
+        return new, (obs, out.action_weights.astype(jnp.float16), ~done, win & ~done)
+
+    return jax.lax.scan(body, carry, keys)
+
+
+class ContinuousSelfPlay:
+    """수 제한 없는 자가대전. 슬롯마다 판이 끝나면(골 도착) 기록을 내보내고 그 자리에 새 판을 넣는다.
+    sampler(n) -> ((tiles, me, opp, mc, oc) 각 bool[n, N], info 목록 n개). max_age 수를 넘긴 판은 학습에서 빼고 새 판으로 바꾼다
+    (무승부로 치지 않는다, 끝없이 맴도는 판을 막는 안전장치)."""
+
+    def __init__(self, slots, sampler, chunk=50, max_age=3000):
+        self.slots, self.sampler, self.chunk, self.max_age = slots, sampler, chunk, max_age
+        starts, self.info = sampler(slots)
+        self.state = [np.array(x) for x in starts]
+        self.done = np.zeros(slots, bool)
+        self.obs = [[] for _ in range(slots)]
+        self.pi = [[] for _ in range(slots)]
+        self.age = np.zeros(slots, np.int64)
+        self.discarded = 0
+
+    def _reset(self, idx):
+        starts, info = self.sampler(len(idx))
+        for j in range(5):
+            self.state[j][idx] = starts[j]
+        for k, b in enumerate(idx):
+            self.info[b] = info[k]
+            self.obs[b], self.pi[b] = [], []
+        self.done[idx] = False
+        self.age[idx] = 0
+
+    def collect(self, params, rng, games, num_simulations, gamma=1.0):
+        """끝난 판 games 개 이상을 모은다. 반환: [(입력[L,OBS], 정책[L,A], 가치 목표[L], info, 승자, 길이)], 이번에 뺀 판 수.
+        승자 0 = 그 판 시작 국면에서 둘 차례였던 쪽."""
+        finished, discarded0 = [], self.discarded
+        while len(finished) < games:
+            rng, k = jax.random.split(rng)
+            carry = (*(jnp.asarray(x) for x in self.state), jnp.asarray(self.done))
+            carry, (O, P, AL, WN) = _cont_chunk(params, carry, jax.random.split(k, self.chunk), num_simulations, self.chunk)
+            self.state = [np.array(x) for x in carry[:5]]
+            self.done = np.array(carry[5])
+            O, P, AL, WN = np.asarray(O), np.asarray(P), np.asarray(AL), np.asarray(WN)
+            reset = []
+            for b in range(self.slots):
+                al = AL[:, b]
+                if al.any():
+                    self.obs[b].append(O[al, b])
+                    self.pi[b].append(P[al, b])
+                    self.age[b] += int(al.sum())
+                if WN[:, b].any():
+                    o = np.concatenate(self.obs[b])
+                    p = np.concatenate(self.pi[b])
+                    L = len(o)
+                    w = (L - 1) % 2  # 마지막 수(골 도착)를 둔 쪽
+                    t = np.arange(L)
+                    z = np.where(t % 2 == w, 1.0, -1.0) * (gamma ** (L - 1 - t) if gamma < 1.0 else 1.0)
+                    finished.append((o, p, z.astype(np.float32), self.info[b], w, L))
+                    reset.append(b)
+                elif self.age[b] > self.max_age:
+                    self.discarded += 1
+                    reset.append(b)
+            if reset:
+                self._reset(np.array(reset))
+        return finished, self.discarded - discarded0
+
+
 # ------------------------------------------------------------------ 학습
 def make_optimizer(lr):
     return optax.adamw(lr, weight_decay=1e-4)
