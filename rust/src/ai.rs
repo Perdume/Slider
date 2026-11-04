@@ -12,7 +12,9 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::hash::{BuildHasherDefault, Hasher};
-use std::time::{Duration, Instant};
+use std::time::Duration;
+
+use crate::clock::Instant;
 
 use crate::bitboard::{self as bb, CELLS, GOAL, MAX_MOVES};
 use crate::nnue::Network;

@@ -11,6 +11,7 @@ pub mod ai;
 pub mod arena;
 pub mod bitboard;
 pub mod cli;
+pub mod clock;
 pub mod javarandom;
 pub mod nnue;
 pub mod weights;

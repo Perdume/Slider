@@ -1,0 +1,19 @@
+[package]
+name = "slider-wasm"
+version = "0.1.0"
+edition = "2021"
+description = "Slider 엔진을 브라우저용 WebAssembly 로 내보내는 얇은 층 (wasm-bindgen 없이 숫자만 주고받음)"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+path = "src/lib.rs"
+
+[dependencies]
+slider-engine = { path = "../../rust" }
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"

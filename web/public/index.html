@@ -1,0 +1,478 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<style>:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}[hidden]{display:none!important}</style>
+</head>
+<body>
+<title>Slider</title>
+<meta name="description" content="7x7 타일 미끄럼 보드게임 Slider. 브라우저 안에서 도는 탐색 엔진 AI 와 대국.">
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+KR:wght@400;500;700&family=JetBrains+Mono:wght@500;700&display=swap">
+<style>
+/* 배치: 왼쪽 형세 막대 | 보드 | 오른쪽 패널 (좁으면 패널이 아래로) */
+:root {
+  --bg: #eef0ee; --panel: #ffffff; --panel-2: #f4f6f4; --line: #d8ddd8; --fg: #1d2421; --muted: #5d6a64;
+  --accent: #2f7a5b; --accent-fg: #ffffff;
+  --frame: #2a3438; --void: #33403f; --void-dot: #43514f; --coord: #8f9c97;
+  --tile: #c9b994; --tile-hi: #ddd0ad; --tile-lo: #a8996f; --goal: #e2a93b;
+  --a-piece: #f7f5ef; --a-ink: #1d2421; --a-edge: #8d958f; --b-piece: #1b1f22; --b-ink: #f7f5ef; --b-edge: #59636a;
+  --a-move: #e98a3c; --b-move: #3b8fd9; --target: #2fbf86;
+  --bar-a: #f7f5ef; --bar-b: #262c2f; --warn: #c2492f;
+  --font-ui: "IBM Plex Sans KR", "Apple SD Gothic Neo", "Malgun Gothic", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #151a19; --panel: #1e2523; --panel-2: #252d2b; --line: #33403c; --fg: #e8ece9; --muted: #9aa8a2;
+    --accent: #4fb388; --accent-fg: #0f1513; --frame: #0f1416; --void: #26302f; --void-dot: #33403e;
+    --bar-a: #eceae3; --bar-b: #0c0f10; --warn: #ef7a5f;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #151a19; --panel: #1e2523; --panel-2: #252d2b; --line: #33403c; --fg: #e8ece9; --muted: #9aa8a2;
+  --accent: #4fb388; --accent-fg: #0f1513; --frame: #0f1416; --void: #26302f; --void-dot: #33403e;
+  --bar-a: #eceae3; --bar-b: #0c0f10; --warn: #ef7a5f;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body {
+  background: var(--bg); color: var(--fg); font-family: var(--font-ui); font-size: 14px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 16px 28px;
+}
+button, select { font: inherit; color: inherit; }
+button:focus-visible, select:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.wrap { max-width: 1120px; margin: 0 auto; display: grid; gap: 14px; }
+header.top { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px 16px; }
+header.top h1 { margin: 0; font-size: 22px; font-weight: 700; letter-spacing: -0.01em; }
+header.top h1 small { font-size: 13px; font-weight: 500; color: var(--muted); margin-left: 8px; }
+.settings { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.settings label { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); }
+.settings select, .settings button {
+  height: 36px; border-radius: 6px; border: 1px solid var(--line); background: var(--panel); padding: 0 10px; color: var(--fg);
+}
+.settings button { cursor: pointer; font-weight: 500; }
+.settings button.primary { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
+.settings button:disabled { opacity: .45; cursor: default; }
+
+.main { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 16px; align-items: start; }
+.boardcol { display: grid; gap: 8px; min-width: 0; }
+.player { display: flex; align-items: center; gap: 10px; }
+.player > div { min-width: 0; }
+.player .dot { width: 22px; height: 22px; flex: none; border-radius: 50%; display: grid; place-items: center; font: 700 12px var(--font-mono); }
+.player.a .dot { background: var(--a-piece); color: var(--a-ink); border: 1.5px solid var(--a-edge); }
+.player.b .dot { background: var(--b-piece); color: var(--b-ink); border: 1.5px solid var(--b-edge); }
+.player .name { font-weight: 700; }
+.player .sub { color: var(--muted); font-size: 12px; }
+.player .turn { margin-left: auto; white-space: nowrap; flex: none; font-size: 11px; font-weight: 700; padding: 3px 8px; border-radius: 4px; background: var(--accent); color: var(--accent-fg); visibility: hidden; }
+.player.on .turn { visibility: visible; }
+.stage { display: grid; grid-template-columns: 26px minmax(0, 1fr); gap: 8px; }
+.evalbar { position: relative; border-radius: 4px; overflow: hidden; background: var(--bar-b); }
+.evalbar .fill { position: absolute; left: 0; right: 0; bottom: 0; height: 50%; background: var(--bar-a); transition: height .35s ease; }
+.evalbar .num { position: absolute; left: 0; right: 0; font: 700 10px var(--font-mono); text-align: center; }
+.evalbar .num.bot { bottom: 4px; color: #2a3135; }
+.evalbar .num.topn { top: 4px; color: #e9ece9; }
+.board { width: 100%; max-width: 100%; aspect-ratio: 1 / 1; display: block; border-radius: 6px; background: var(--frame); touch-action: manipulation; user-select: none; }
+.board .hit { cursor: pointer; }
+@keyframes pulse { from { opacity: .35; } to { opacity: 1; } }
+.board .ring { animation: pulse .9s ease-in-out infinite alternate; }
+@media (prefers-reduced-motion: reduce) { .board .ring { animation: none; } .evalbar .fill { transition: none; } }
+
+aside.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; display: grid; min-width: 0; }
+.status { padding: 14px; display: grid; gap: 6px; border-bottom: 1px solid var(--line); }
+.status .big { font-size: 16px; font-weight: 700; }
+.status .big.end { color: var(--accent); }
+.status .meta { color: var(--muted); font-size: 12px; font-family: var(--font-mono); font-variant-numeric: tabular-nums; min-height: 1em; }
+.status .hint { font-size: 13px; line-height: 1.55; }
+.thinking { display: inline-flex; gap: 4px; margin-left: 6px; vertical-align: middle; }
+.thinking i { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); animation: pulse .6s infinite alternate; }
+.thinking i:nth-child(2) { animation-delay: .2s; } .thinking i:nth-child(3) { animation-delay: .4s; }
+.moves { max-height: 340px; overflow-y: auto; padding: 4px 0; min-height: 80px; }
+.mrow { display: grid; grid-template-columns: 38px 1fr 1fr; align-items: center; font-size: 13px; }
+.mrow:nth-child(odd) { background: var(--panel-2); }
+.mrow .no { color: var(--muted); font-family: var(--font-mono); font-size: 12px; text-align: right; padding-right: 8px; }
+.mrow .mv { padding: 5px 6px; font-family: var(--font-mono); font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mrow .mv.last { background: var(--accent); color: var(--accent-fg); border-radius: 4px; }
+.empty { color: var(--muted); font-size: 13px; padding: 12px 14px; }
+details.rules { border-top: 1px solid var(--line); padding: 10px 14px 14px; font-size: 13px; line-height: 1.6; }
+details.rules summary { cursor: pointer; font-weight: 700; }
+details.rules ul { margin: 8px 0 0; padding-left: 18px; }
+.err { color: var(--warn); font-weight: 700; }
+footer { color: var(--muted); font-size: 12px; text-align: center; }
+
+@media (max-width: 860px) { .main { grid-template-columns: minmax(0, 1fr); } .moves { max-height: 220px; } }
+@media (max-width: 420px) {
+  .stage { grid-template-columns: 18px minmax(0, 1fr); gap: 6px; }
+  .evalbar .num { font-size: 8px; }
+  .settings label span.lbl { display: none; }
+}
+</style>
+
+<div class="wrap">
+  <header class="top">
+    <h1>Slider<small>타일 미끄럼 보드게임</small></h1>
+    <div class="settings">
+      <label for="seat"><span class="lbl">내 자리</span>
+        <select id="seat">
+          <option value="0" selected>A · 먼저 (1·2)</option>
+          <option value="1">B · 나중 (X·Y)</option>
+          <option value="watch">AI 끼리 관전</option>
+        </select>
+      </label>
+      <label for="think"><span class="lbl">AI 생각</span>
+        <select id="think">
+          <option value="300">0.3초</option>
+          <option value="1000" selected>1초</option>
+          <option value="2000">2초</option>
+          <option value="4000">4초</option>
+        </select>
+      </label>
+      <button id="undo" type="button">무르기</button>
+      <button id="newgame" type="button" class="primary">새 게임</button>
+    </div>
+  </header>
+
+  <div class="main">
+    <div class="boardcol">
+      <div class="player b" id="pb"><span class="dot">X</span><div><div class="name" id="nameB">B · AI</div><div class="sub">말 X(오른쪽 아래) · Y(왼쪽 위)</div></div><span class="turn">차례</span></div>
+      <div class="stage">
+        <div class="evalbar" aria-label="형세 막대 (흰색 = A 유리)"><div class="fill" id="evalfill"></div><span class="num topn" id="evaltop"></span><span class="num bot" id="evalbot"></span></div>
+        <svg class="board" id="board" viewBox="-34 -6 740 740" role="img" aria-label="보드"></svg>
+      </div>
+      <div class="player a" id="pa"><span class="dot">1</span><div><div class="name" id="nameA">A · 나</div><div class="sub">말 1(오른쪽 위) · 2(왼쪽 아래) · 먼저 둠</div></div><span class="turn">차례</span></div>
+    </div>
+
+    <aside class="panel">
+      <div class="status">
+        <div class="big" id="sBig">엔진 불러오는 중…</div>
+        <div class="meta" id="sMeta"></div>
+        <div class="hint" id="sHint"></div>
+      </div>
+      <div class="moves" id="moves"><div class="empty">아직 둔 수가 없습니다.</div></div>
+      <details class="rules" open>
+        <summary>규칙과 두는 법</summary>
+        <ul>
+          <li>말은 하나씩 정해진 순서로 움직입니다: <b>1 → X → 2 → Y</b> → 1 …</li>
+          <li>한 턴: 차례인 말이 타일 위를 원하는 만큼 걸은 뒤(다른 말은 못 지나감), 서 있는 타일째 빈 칸 쪽으로 미끄러집니다. 타일은 다른 타일이나 벽 앞에서 멈춥니다.</li>
+          <li>가운데 <b>골</b>에 먼저 멈추는 쪽이 이깁니다. 같은 국면이 3번 나오면 무승부.</li>
+          <li>두는 법: 점(•)이 찍힌 타일을 눌러 출발할 타일을 고르고, 초록 원을 눌러 미끄러질 곳을 고릅니다. 처음에는 말이 서 있는 타일이 골라져 있습니다.</li>
+        </ul>
+      </details>
+    </aside>
+  </div>
+  <footer>AI 는 서버가 아니라 이 브라우저 안(WebAssembly)에서 계산합니다 · 엔진: 알파베타 탐색 + SPSA 튜닝</footer>
+</div>
+
+<script>
+"use strict";
+const N = 7, CS = 100, GOAL = 24, MAX_PLIES = 400;
+const LABEL = [["1", "2"], ["X", "Y"]];
+const ARROW = ["↑", "↓", "←", "→"];
+const START_ROWS = ["1100011", "1000001", "0000000", "0000000", "0000000", "1000001", "1100011"];
+const START_CELLS = [[6, 42], [48, 0]];
+const imports = { env: { now_ms: () => performance.now() } };
+const $ = id => document.getElementById(id);
+const coord = c => "abcdefg"[c % N] + (N - Math.floor(c / N));
+const bit = c => 1n << BigInt(c);
+const isTile = (t, c) => ((t >> BigInt(c)) & 1n) === 1n;
+const mvFrom = m => m & 63, mvDir = m => (m >> 6) & 3, mvDest = m => (m >> 8) & 63, mvSrc = m => (m >> 14) & 63;
+
+let E = null, WINB = 99000, worker = null, workerBusy = false, workerSeq = 0;
+let game, selFrom = null;
+
+async function loadWasm() {
+  try {
+    return (await WebAssembly.instantiateStreaming(fetch("engine.wasm"), imports)).instance.exports;
+  } catch (e) {
+    const buf = await (await fetch("engine.wasm")).arrayBuffer();
+    return (await WebAssembly.instantiate(buf, imports)).instance.exports;
+  }
+}
+function makeWorker() {
+  if (worker) worker.terminate();
+  worker = new Worker("worker.js");
+  workerBusy = false;
+}
+
+// ---------- 국면 ----------
+function startState() {
+  let tiles = 0n;
+  START_ROWS.join("").split("").forEach((v, i) => { if (v === "1") tiles |= bit(i); });
+  return { tiles, cells: [START_CELLS[0].slice(), START_CELLS[1].slice()], next: [0, 0], side: 0 };
+}
+const clone = s => ({ tiles: s.tiles, cells: [s.cells[0].slice(), s.cells[1].slice()], next: s.next.slice(), side: s.side });
+function masks(s) {
+  const me = bit(s.cells[s.side][0]) | bit(s.cells[s.side][1]);
+  const opp = bit(s.cells[1 - s.side][0]) | bit(s.cells[1 - s.side][1]);
+  const mc = bit(s.cells[s.side][s.next[s.side]]);
+  const oc = bit(s.cells[1 - s.side][s.next[1 - s.side]]);
+  return { me, opp, mc, oc };
+}
+function legal(s) {
+  const { me, opp, mc } = masks(s);
+  const n = E.gen(s.tiles, me, opp, mc);
+  return Array.from(new Int32Array(E.memory.buffer, E.moves_ptr(), n));
+}
+function hashOf(s) { const { me, opp, mc, oc } = masks(s); return E.hash(s.tiles, me, opp, mc, oc); }
+function walkPath(s, m) {
+  const { me, opp } = masks(s);
+  const n = E.path(s.tiles, me, opp, m);
+  return Array.from(new Int32Array(E.memory.buffer, E.path_ptr(), n));
+}
+function afterMove(s, m) {
+  const t = clone(s);
+  t.tiles = E.apply_tiles(s.tiles, m);
+  t.cells[s.side][s.next[s.side]] = mvDest(m);
+  t.next[s.side] ^= 1;
+  t.side ^= 1;
+  return t;
+}
+function afterPass(s) { const t = clone(s); t.next[s.side] ^= 1; t.side ^= 1; return t; }
+
+function newGame() {
+  makeWorker();
+  const s = startState();
+  game = { states: [s], plies: [], hashes: [hashOf(s)], over: null, evalA: 0, info: null };
+  selFrom = null;
+  advance();
+}
+const seatVal = () => $("seat").value;
+const isHuman = side => seatVal() !== "watch" && Number(seatVal()) === side;
+const cur = () => game.states[game.states.length - 1];
+
+function record(s, m) {
+  const side = s.side, piece = s.next[side];
+  if (m === null) return { side, piece, pass: true };
+  return { side, piece, m, path: walkPath(s, m), from: mvFrom(m), dir: mvDir(m), dest: mvDest(m) };
+}
+function play(m) {
+  const s = cur();
+  const rec = record(s, m);
+  const t = m === null ? afterPass(s) : afterMove(s, m);
+  game.plies.push(rec);
+  game.states.push(t);
+  const h = hashOf(t);
+  game.hashes.push(h);
+  selFrom = null;
+  if (m !== null && mvDest(m) === GOAL) game.over = { winner: rec.side, why: `${LABEL[rec.side][rec.piece]} 이(가) 골에 도착` };
+  else if (game.hashes.filter(x => x === h).length >= 3) game.over = { winner: -1, why: "같은 국면 3번 반복" };
+  else if (game.plies.length >= MAX_PLIES) game.over = { winner: -1, why: `${MAX_PLIES}수 제한` };
+  advance();
+}
+
+function advance() {
+  render();
+  if (game.over) return;
+  const s = cur();
+  const moves = legal(s);
+  if (moves.length === 0) {
+    setTimeout(() => { if (cur() === s) play(null); }, 600);
+    return;
+  }
+  if (!isHuman(s.side)) aiMove(s);
+}
+
+function aiMove(s) {
+  const { me, opp, mc, oc } = masks(s);
+  const seq = ++workerSeq;
+  workerBusy = true;
+  render();
+  worker.onmessage = e => {
+    if (e.data.seq !== seq || cur() !== s) return;
+    workerBusy = false;
+    const { mv, score, depth, nodes } = e.data;
+    game.info = { side: s.side, score, depth, nodes };
+    game.evalA = s.side === 0 ? score : -score;
+    play(mv < 0 ? null : mv);
+  };
+  worker.onerror = () => { workerBusy = false; $("sHint").innerHTML = '<span class="err">AI 계산 중 오류가 났습니다. 새 게임을 눌러 주세요.</span>'; };
+  worker.postMessage({ seq, tiles: s.tiles, me, opp, mc, oc, hist: game.hashes.slice(0, -1).concat([game.hashes[game.hashes.length - 1]]), time: Number($("think").value) });
+}
+
+function undo() {
+  if (!game || game.plies.length === 0) return;
+  makeWorker();
+  // 내 차례가 다시 올 때까지 (내가 둔 수 하나 포함) 되돌린다
+  do {
+    game.plies.pop(); game.states.pop(); game.hashes.pop();
+  } while (game.plies.length > 0 && !isHuman(cur().side));
+  game.over = null; selFrom = null; game.info = null;
+  advance();
+}
+
+// ---------- 그리기 ----------
+function svgEl(tag, attrs, parent) {
+  const e = document.createElementNS("http://www.w3.org/2000/svg", tag);
+  for (const k in attrs) e.setAttribute(k, attrs[k]);
+  if (parent) parent.appendChild(e);
+  return e;
+}
+const cx = c => (c % N) * CS + CS / 2, cy = c => Math.floor(c / N) * CS + CS / 2;
+function arrow(board, a, b, color, width, opacity) {
+  const x1 = cx(a), y1 = cy(a), x2 = cx(b), y2 = cy(b), len = Math.hypot(x2 - x1, y2 - y1);
+  if (!len) return;
+  const ux = (x2 - x1) / len, uy = (y2 - y1) / len, hx = x2 - ux * 30, hy = y2 - uy * 30;
+  svgEl("line", { x1: x1 + ux * 10, y1: y1 + uy * 10, x2: hx, y2: hy, stroke: color, "stroke-width": width, "stroke-linecap": "round", opacity }, board);
+  svgEl("polygon", { points: `${x2 - ux * 6},${y2 - uy * 6} ${hx - uy * 20},${hy + ux * 20} ${hx + uy * 20},${hy - ux * 20}`, fill: color, opacity }, board);
+}
+
+function drawBoard() {
+  const s = cur(), board = $("board");
+  board.innerHTML = "";
+  const css = getComputedStyle(document.documentElement), col = n => css.getPropertyValue(n).trim();
+  svgEl("rect", { x: 0, y: 0, width: 700, height: 700, rx: 6, fill: col("--void") }, board);
+  for (let i = 0; i < N; i++) {
+    svgEl("text", { x: -17, y: i * CS + 56, "text-anchor": "middle", "font-size": 22, "font-family": "JetBrains Mono, monospace", fill: col("--coord") }, board).textContent = N - i;
+    svgEl("text", { x: i * CS + 50, y: 726, "text-anchor": "middle", "font-size": 22, "font-family": "JetBrains Mono, monospace", fill: col("--coord") }, board).textContent = "abcdefg"[i];
+  }
+  for (let c = 0; c < N * N; c++) {
+    const x = (c % N) * CS, y = Math.floor(c / N) * CS;
+    if (isTile(s.tiles, c)) {
+      svgEl("rect", { x: x + 5, y: y + 5, width: 90, height: 90, rx: 9, fill: col("--tile-lo") }, board);
+      svgEl("rect", { x: x + 5, y: y + 5, width: 90, height: 84, rx: 9, fill: col("--tile") }, board);
+      svgEl("rect", { x: x + 12, y: y + 10, width: 76, height: 6, rx: 3, fill: col("--tile-hi"), opacity: 0.8 }, board);
+    } else {
+      svgEl("circle", { cx: x + 50, cy: y + 50, r: 3, fill: col("--void-dot") }, board);
+    }
+  }
+  svgEl("circle", { cx: cx(GOAL), cy: cy(GOAL), r: 36, fill: "none", stroke: col("--goal"), "stroke-width": 4, opacity: 0.9 }, board);
+  svgEl("circle", { cx: cx(GOAL), cy: cy(GOAL), r: 22, fill: "none", stroke: col("--goal"), "stroke-width": 2, opacity: 0.6 }, board);
+  if (!s.cells.some(p => p.includes(GOAL)))
+    svgEl("text", { x: cx(GOAL), y: cy(GOAL) + 8, "text-anchor": "middle", "font-size": 22, "font-weight": 700, "font-family": "JetBrains Mono, monospace", fill: col("--goal") }, board).textContent = "골";
+
+  // 마지막 수
+  const last = game.plies[game.plies.length - 1];
+  if (last && !last.pass) {
+    const mcol = last.side === 0 ? col("--a-move") : col("--b-move");
+    svgEl("rect", { x: (last.from % N) * CS + 7, y: Math.floor(last.from / N) * CS + 7, width: 86, height: 86, rx: 9, fill: "none", stroke: mcol, "stroke-width": 3, "stroke-dasharray": "8 6", opacity: 0.9 }, board);
+    svgEl("rect", { x: (last.dest % N) * CS + 4, y: Math.floor(last.dest / N) * CS + 4, width: 92, height: 92, rx: 10, fill: mcol, opacity: 0.22 }, board);
+    if (last.path.length > 1)
+      svgEl("polyline", { points: last.path.map(c => `${cx(c)},${cy(c)}`).join(" "), fill: "none", stroke: mcol, "stroke-width": 6, "stroke-linecap": "round", "stroke-linejoin": "round", "stroke-dasharray": "2 12" }, board);
+    arrow(board, last.from, last.dest, mcol, 14, 0.75);
+  }
+
+  // 사람 차례: 출발 타일 점, 고른 타일의 미끄러질 곳
+  const human = !game.over && isHuman(s.side) && E;
+  let moves = [], targets = [];
+  if (human) {
+    moves = legal(s);
+    const src = s.cells[s.side][s.next[s.side]];
+    const froms = [...new Set(moves.map(mvFrom))];
+    if (selFrom === null || !froms.includes(selFrom)) selFrom = froms.includes(src) ? src : (froms[0] ?? null);
+    froms.forEach(f => {
+      if (f === selFrom) svgEl("rect", { x: (f % N) * CS + 6, y: Math.floor(f / N) * CS + 6, width: 88, height: 88, rx: 9, fill: "none", stroke: col("--target"), "stroke-width": 5 }, board);
+      else if (f !== src) svgEl("circle", { cx: cx(f), cy: cy(f), r: 11, fill: col("--target"), opacity: 0.85 }, board);
+    });
+    targets = moves.filter(m => mvFrom(m) === selFrom);
+    targets.forEach(m => {
+      arrow(board, selFrom, mvDest(m), col("--target"), 8, 0.45);
+      svgEl("circle", { cx: cx(mvDest(m)), cy: cy(mvDest(m)), r: 26, fill: col("--target"), opacity: 0.55, stroke: col("--target"), "stroke-width": 4 }, board);
+    });
+  }
+
+  // 말
+  const toMove = s.side, nextPiece = s.next[toMove];
+  for (let sd = 0; sd < 2; sd++) for (let i = 0; i < 2; i++) {
+    const c = s.cells[sd][i];
+    const g = svgEl("g", { transform: `translate(${cx(c)},${cy(c)})` }, board);
+    if (!game.over && sd === toMove && i === nextPiece)
+      svgEl("circle", { class: "ring", r: 40, fill: "none", stroke: col("--accent"), "stroke-width": 5, "stroke-dasharray": "10 6" }, g);
+    svgEl("circle", { r: 31, cy: 3, fill: "#000", opacity: 0.25 }, g);
+    svgEl("circle", { r: 30, fill: col(sd === 0 ? "--a-piece" : "--b-piece"), stroke: col(sd === 0 ? "--a-edge" : "--b-edge"), "stroke-width": 3 }, g);
+    svgEl("text", { y: 10, "text-anchor": "middle", "font-size": 30, "font-weight": 700, "font-family": "JetBrains Mono, monospace", fill: col(sd === 0 ? "--a-ink" : "--b-ink") }, g).textContent = LABEL[sd][i];
+  }
+
+  // 누를 수 있는 칸 (맨 위에 투명하게)
+  if (human) {
+    const froms = new Set(moves.map(mvFrom));
+    const dests = new Map(targets.map(m => [mvDest(m), m]));
+    for (let c = 0; c < N * N; c++) {
+      if (!froms.has(c) && !dests.has(c)) continue;
+      const r = svgEl("rect", { class: "hit", x: (c % N) * CS, y: Math.floor(c / N) * CS, width: CS, height: CS, fill: "transparent" }, board);
+      r.addEventListener("click", () => {
+        if (dests.has(c)) play(dests.get(c));
+        else { selFrom = c; render(); }
+      });
+    }
+  }
+}
+
+function notation(p) {
+  if (p.pass) return `${LABEL[p.side][p.piece]} 넘김`;
+  const walk = p.path.length > 1 ? p.path.map(coord).join("-") : coord(p.path[0]);
+  return `${LABEL[p.side][p.piece]} ${walk} ${ARROW[p.dir]}${coord(p.dest)}`;
+}
+function drawMoves() {
+  const box = $("moves");
+  if (!game.plies.length) { box.innerHTML = '<div class="empty">아직 둔 수가 없습니다.</div>'; return; }
+  box.innerHTML = "";
+  for (let r = 0; r < game.plies.length; r += 2) {
+    const row = document.createElement("div");
+    row.className = "mrow";
+    row.innerHTML = `<span class="no">${r / 2 + 1}.</span>`;
+    for (let j = r; j < r + 2; j++) {
+      const sp = document.createElement("span");
+      sp.className = "mv" + (j === game.plies.length - 1 ? " last" : "");
+      if (j < game.plies.length) sp.textContent = notation(game.plies[j]);
+      row.appendChild(sp);
+    }
+    box.appendChild(row);
+  }
+  box.scrollTop = box.scrollHeight;
+}
+function drawEval() {
+  const v = game.evalA;
+  const p = v >= WINB ? 1 : v <= -WINB ? 0 : 1 / (1 + Math.exp(-v / 180));
+  $("evalfill").style.height = (p * 100).toFixed(1) + "%";
+  const txt = Math.abs(v) >= WINB ? "승" : (Math.abs(v) / 100).toFixed(1);
+  $("evalbot").textContent = v >= 0 ? (v >= WINB ? "A승" : "+" + txt) : "";
+  $("evaltop").textContent = v < 0 ? (v <= -WINB ? "B승" : "+" + txt) : "";
+}
+function drawStatus() {
+  const s = cur(), big = $("sBig"), meta = $("sMeta"), hint = $("sHint");
+  big.classList.toggle("end", !!game.over);
+  const who = side => (seatVal() === "watch" ? (side === 0 ? "A" : "B") : isHuman(side) ? "나" : "AI");
+  if (game.over) {
+    if (game.over.winner < 0) big.textContent = `무승부 · ${game.over.why}`;
+    else big.textContent = `${who(game.over.winner)} 승리 (${game.over.winner === 0 ? "A" : "B"}) · ${game.over.why}`;
+    hint.textContent = "새 게임을 누르면 다시 시작합니다. 무르기로 되돌려 볼 수도 있습니다.";
+  } else if (isHuman(s.side)) {
+    big.textContent = `내 차례 · 말 ${LABEL[s.side][s.next[s.side]]}`;
+    hint.textContent = "점이 찍힌 타일을 눌러 출발할 타일을 고르고, 초록 원을 눌러 미끄러질 곳을 고르세요.";
+  } else {
+    big.innerHTML = `${who(s.side)} 생각 중 · 말 ${LABEL[s.side][s.next[s.side]]}<span class="thinking"><i></i><i></i><i></i></span>`;
+    hint.textContent = "";
+  }
+  const info = game.info;
+  if (info) {
+    const sc = info.score >= WINB ? "이김 확정" : info.score <= -WINB ? "짐 확정" : (info.score >= 0 ? "+" : "") + (info.score / 100).toFixed(2);
+    meta.textContent = `마지막 AI 수 (${info.side === 0 ? "A" : "B"}) · 형세 ${sc} · 깊이 ${info.depth} · 노드 ${Math.round(info.nodes).toLocaleString("ko-KR")}`;
+  } else meta.textContent = "";
+  const done = !!game.over;
+  $("pa").classList.toggle("on", !done && s.side === 0);
+  $("pb").classList.toggle("on", !done && s.side === 1);
+  const seat = seatVal();
+  $("nameA").textContent = seat === "watch" ? "A · AI" : seat === "0" ? "A · 나" : "A · AI";
+  $("nameB").textContent = seat === "watch" ? "B · AI" : seat === "1" ? "B · 나" : "B · AI";
+  $("undo").disabled = seat === "watch" || !game.plies.some(p => isHuman(p.side));
+}
+function render() { if (!game || !E) return; drawBoard(); drawMoves(); drawEval(); drawStatus(); }
+
+$("newgame").addEventListener("click", newGame);
+$("undo").addEventListener("click", undo);
+$("seat").addEventListener("change", newGame);
+window.matchMedia("(prefers-color-scheme: dark)").addEventListener?.("change", render);
+new MutationObserver(render).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+
+loadWasm().then(ex => { E = ex; WINB = E.win_bound(); newGame(); })
+  .catch(err => { $("sBig").innerHTML = '<span class="err">엔진을 불러오지 못했습니다</span>'; $("sHint").textContent = String(err); });
+</script>
+
+</body>
+</html>
