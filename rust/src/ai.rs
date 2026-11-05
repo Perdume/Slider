@@ -43,6 +43,40 @@ pub const WIN: i32 = 100_000;
 pub const WIN_BOUND: i32 = WIN - 1_000;
 /// 상대가 계획을 방해하지 않는다고 가정했을 때 찾은 승리 (확정 승리는 아니다)
 pub const PLAN_WIN: i32 = 5_000;
+
+/// 판정 규칙의 평가 가중치 (가까운 말 / 먼 말의 골까지 거리 차 1칸당)
+const CENTER_W1: i32 = 15;
+const CENTER_W2: i32 = 5;
+
+/// 말들의 골까지 맨해튼 거리 (가까운 말, 먼 말)
+pub fn goal_dists(pieces: u64) -> (i32, i32) {
+    let (gr, gc) = ((bb::GOAL / bb::SIZE) as i32, (bb::GOAL % bb::SIZE) as i32);
+    let mut d = [99i32; 2];
+    let mut p = pieces;
+    let mut k = 0;
+    while p != 0 && k < 2 {
+        let c = p.trailing_zeros() as i32;
+        d[k] = (c / bb::SIZE as i32 - gr).abs() + (c % bb::SIZE as i32 - gc).abs();
+        p &= p - 1;
+        k += 1;
+    }
+    if d[0] > d[1] {
+        d.swap(0, 1);
+    }
+    (d[0], d[1])
+}
+
+/// 판정: 가까운 말의 골까지 거리가 짧은 쪽 승, 같으면 먼 말로, 그것도 같으면 무승부. 1 = me 승, -1 = opp 승, 0 = 무
+pub fn judge(me: u64, opp: u64) -> i32 {
+    let (m, o) = (goal_dists(me), goal_dists(opp));
+    if m < o {
+        1
+    } else if m > o {
+        -1
+    } else {
+        0
+    }
+}
 pub const PLAN_BOUND: i32 = PLAN_WIN - 1_000;
 pub const DRAW: i32 = 0;
 const INF: i32 = WIN + 1;
@@ -398,6 +432,10 @@ pub struct SliderAi {
 
     /// 실제 게임에서 이미 나온 국면의 횟수 (position_hash 기준). 3번째 반복은 무승부다.
     game_history: History,
+    /// 실험 규칙: 이 ply 수에 닿으면 판정 (골에 가까운 쪽 승). i32::MAX 면 끔
+    cap_left: i32,
+    /// 실험 규칙: 실제 게임에서 이미 나온 국면을 다시 만드는 수는 둘 수 없다
+    superko: bool,
 
     deadline: Instant,
     nodes: u64,
@@ -553,6 +591,8 @@ impl SliderAi {
             ocs: [0; MAX_PLY + 2],
             scratch2: vec![0; MAX_MOVES],
             game_history: History::default(),
+            cap_left: i32::MAX,
+            superko: false,
             deadline: Instant::now(),
             nodes: 0,
             aborted: false,
@@ -574,6 +614,8 @@ impl SliderAi {
         a.tune = self.tune;
         a.cur_contempt = self.cur_contempt;
         a.game_history = self.game_history.clone();
+        a.cap_left = self.cap_left;
+        a.superko = self.superko;
         a.opt_ply = self.opt_ply;
         a.path[0] = self.path[0];
         a.mcs[0] = self.mcs[0];
@@ -612,6 +654,16 @@ impl SliderAi {
     }
 
     /// 실제 게임에서 지금까지 나온 국면과 횟수. 키는 position_hash(tiles, 둘 차례인 쪽 말, 반대편 말).
+    /// 실험 규칙: 지금부터 `left` ply 뒤에 판정한다 (None 이면 끔)
+    pub fn set_cap(&mut self, left: Option<i32>) {
+        self.cap_left = left.unwrap_or(i32::MAX);
+    }
+
+    /// 실험 규칙: 이미 나온 국면을 다시 만드는 수 금지
+    pub fn set_superko(&mut self, on: bool) {
+        self.superko = on;
+    }
+
     pub fn set_game_history(&mut self, history: History) {
         self.game_history = history;
     }
@@ -959,8 +1011,19 @@ impl SliderAi {
             }
             i -= 2;
         }
+        if self.superko && ply > 0 && self.game_history.contains_key(&hash) {
+            // 이 국면을 만든 수는 둘 수 없는 수다 -> 그 수를 둔 쪽(부모)에게 패배로 보인다
+            return WIN - ply as i32;
+        }
         if !self.game_history.is_empty() && self.game_history.get(&hash).copied().unwrap_or(0) >= 2 {
             return self.draw_score(ply);
+        }
+        if ply as i32 >= self.cap_left {
+            return match judge(me, opp) {
+                1 => WIN - ply as i32,
+                -1 => -(WIN - ply as i32),
+                _ => self.draw_score(ply),
+            };
         }
 
         // 같은 국면이라도 탐색 방식(정확/낙관, 낙관까지 남은 수)이 다르면 값이 다르므로 TT 키에 넣는다
@@ -1206,6 +1269,11 @@ impl SliderAi {
             score += self.weights[i] * self.feature[i];
         }
         score += self.tune.nt_me * self.cyc[0] + self.tune.nt_opp * self.cyc[1] + self.tune.pos_nx * self.cyc[2] + self.tune.mob_oc * self.cyc[3];
+        if self.cap_left != i32::MAX {
+            // 판정 규칙이 있으면 골에 가까이 자리 잡는 것 자체가 이득
+            let (m, o) = (goal_dists(me), goal_dists(opp));
+            score += CENTER_W1 * (o.0 - m.0) + CENTER_W2 * (o.1 - m.1);
+        }
         if let Some(net) = &self.net {
             // 신경망은 조용한 국면(양쪽 다 골 위협 없음)에서만 더한다. 학습도 조용한 국면만으로 한다
             if self.is_quiet() {

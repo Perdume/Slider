@@ -52,6 +52,7 @@ fn main() {
     let k: usize = a[5].parse().unwrap();
     let threads: usize = a[6].parse().unwrap();
     let seed: u64 = a[7].parse().unwrap();
+    let choose_end = std::env::var("CHOOSE").map(|v| v == "1").unwrap_or(false);
     let max_plies: usize = std::env::var("MAX_PLIES").ok().and_then(|v| v.parse().ok()).unwrap_or(1500);
     let next = AtomicUsize::new(0);
     let out = Mutex::new(());
@@ -71,7 +72,7 @@ fn main() {
                     let person = s.owner[s.side()];
                     if smart[person] {
                         let (c, v) = choose(&s, eval_ms, cand, k, &mut rng);
-                        if s.can_swap() && s.step == STEPS - 1 && v < 0.5 {
+                        if !choose_end && s.can_swap() && s.step == STEPS - 1 && v < 0.5 {
                             s.swap();
                             continue; // 상대가 이어서 B 로 놓는다
                         }
@@ -81,6 +82,20 @@ fn main() {
                         s.place(l[rng.below(l.len())]);
                     }
                 }
+                // CHOOSE=1: 자르고 고르기. 배치가 끝난 뒤, 마지막에 놓지 않은 사람(지금 A 를 맡은 사람)이 편을 고른다
+                if choose_end {
+                    let chooser = s.owner[0];
+                    let take_b = if smart[chooser] {
+                        let sc = eval_start(&s.start(), 300) as f64;
+                        sc < 0.0
+                    } else {
+                        rng.below(2) == 1
+                    };
+                    if take_b {
+                        s.owner.swap(0, 1);
+                        s.swap_used = true;
+                    }
+                }
                 let start = s.start();
                 let score = eval_start(&start, 300);
                 let r = play_from(&start, ms, max_plies);
@@ -88,9 +103,9 @@ fn main() {
                 let sp = if mode == "ss" { "-".to_string() } else { s_person.to_string() };
                 let _l = out.lock().unwrap();
                 println!(
-                    "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{},{},{},{}",
+                    "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{},{},{},{}\t{}",
                     g, sp, s.swap_used as u8, score, r.winner, wp, r.plies, r.capped as u8, r.passes, s.tiles,
-                    s.pieces[0][0], s.pieces[0][1], s.pieces[1][0], s.pieces[1][1]
+                    s.pieces[0][0], s.pieces[0][1], s.pieces[1][0], s.pieces[1][1], r.judged as u8
                 );
             });
         }

@@ -51,7 +51,7 @@ fn main() {
                 let score = eval_start(&start, 300);
                 let r = play_from(&start, ms, MAX_PLIES);
                 let _l = out.lock().unwrap();
-                println!("{}\t{}\t{}\t{}\t{}\t{}\t{}", g, score, r.winner, r.plies, r.capped as u8, r.passes, desc);
+                println!("{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}", g, score, r.winner, r.plies, r.capped as u8, r.passes, desc, r.judged as u8);
                 if std::env::var("SHOW").is_ok() { let mut s = Setup::default(); let _ = &mut s; }
             });
         }

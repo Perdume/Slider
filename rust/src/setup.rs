@@ -7,7 +7,7 @@
 //! - 스왑: 처음에 B 를 맡은 사람이 배치가 끝나기 전 자기(B) 차례에 한 번, 놓는 대신 편을 바꿀 수 있다.
 //!   판은 그대로이고, 편을 바꾼 뒤에도 B 가 놓을 차례이므로 이제 B 를 맡은 상대가 이어서 놓는다 (헥스의 스왑과 같음).
 
-use crate::ai::{generate_turn, next_turn_pieces, turn_hash, History, SearchOptions, SliderAi, Tunables};
+use crate::ai::{generate_turn, judge, next_turn_pieces, turn_hash, History, SearchOptions, SliderAi, Tunables};
 use crate::bitboard::{self as bb, CELLS, GOAL, MAX_MOVES, SIZE};
 use crate::weights::EvalWeights;
 
@@ -177,48 +177,93 @@ pub struct Played {
     /// -1 무승부, 0 = A 승, 1 = B 승
     pub winner: i32,
     pub plies: usize,
-    /// true = 수 제한에 걸린 무승부 (반복 무승부와 구분)
+    /// true = 안전장치(max_plies)에 걸린 무승부 (반복 무승부와 구분)
     pub capped: bool,
     /// 둘 수가 없어 넘긴 차례 수
     pub passes: usize,
+    /// true = 판정 규칙으로 끝남 (골 도착이 아니라)
+    pub judged: bool,
 }
 
-/// 주어진 국면에서 두 쪽 모두 같은 엔진으로 끝까지 둔다 (3회 반복 무승부, max_plies 는 안전장치).
+/// 끝내는 규칙 실험 (환경 변수): CAP=N 이면 N ply 에 판정 (골에 가까운 쪽 승),
+/// SUPERKO=1 이면 이미 나온 국면을 다시 만드는 수 금지 (3회 반복 무승부 대신)
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Variant {
+    pub cap: Option<usize>,
+    pub superko: bool,
+}
+
+impl Variant {
+    pub fn from_env() -> Self {
+        Variant {
+            cap: std::env::var("CAP").ok().and_then(|v| v.parse().ok()),
+            superko: std::env::var("SUPERKO").map(|v| v == "1").unwrap_or(false),
+        }
+    }
+}
+
+/// 주어진 국면에서 두 쪽 모두 같은 엔진으로 끝까지 둔다 (규칙 실험은 Variant::from_env, max_plies 는 안전장치).
 pub fn play_from(start: &(u64, [u64; 2], [u64; 2]), time_ms: u64, max_plies: usize) -> Played {
+    play_variant(start, time_ms, max_plies, Variant::from_env())
+}
+
+pub fn play_variant(start: &(u64, [u64; 2], [u64; 2]), time_ms: u64, max_plies: usize, v: Variant) -> Played {
     let (mut tiles, mut pieces, mut cur) = *start;
     let mut counts = History::default();
     *counts.entry(turn_hash(tiles, pieces[0], pieces[1], cur[0], cur[1])).or_insert(0) += 1;
     let mut buf = vec![0i32; MAX_MOVES];
     let mut ply = 0;
     let mut passes = 0;
+    let done = |winner: i32, plies: usize, capped: bool, passes: usize, judged: bool| Played { winner, plies, capped, passes, judged };
     while ply < max_plies {
+        if let Some(cap) = v.cap {
+            if ply >= cap {
+                let j = judge(pieces[0], pieces[1]);
+                let w = if j > 0 { 0 } else if j < 0 { 1 } else { -1 };
+                return done(w, ply, false, passes, true);
+            }
+        }
         let side = ply & 1;
         let (me, opp) = (pieces[side], pieces[1 - side]);
         let (mc, oc) = (cur[side], cur[1 - side]);
         let (n, _) = generate_turn(tiles, me, opp, mc, &mut buf);
+        let mut moved = false;
         if n > 0 {
-            let mut ai = engine(time_ms);
+            // 실력 차 실험: TIME_A / TIME_B 가 있으면 그 쪽만 수당 시간을 바꾼다
+            let t = std::env::var(if side == 0 { "TIME_A" } else { "TIME_B" }).ok().and_then(|x| x.parse().ok()).unwrap_or(time_ms);
+            let mut ai = engine(t);
             ai.set_game_history(counts.clone());
+            ai.set_cap(v.cap.map(|c| (c - ply) as i32));
+            ai.set_superko(v.superko);
             let mv = ai.search_turn(tiles, me, opp, mc, oc).mv;
-            tiles = bb::apply(tiles, mv);
-            pieces[side] = bb::apply_pieces(me, mv);
-            cur[side] = next_turn_pieces(me, mc, pieces[side]);
-            if bb::dest(mv) == GOAL {
-                return Played { winner: side as i32, plies: ply + 1, capped: false, passes };
+            let t2 = bb::apply(tiles, mv);
+            let p2 = bb::apply_pieces(me, mv);
+            let c2 = next_turn_pieces(me, mc, p2);
+            let banned = v.superko && counts.contains_key(&turn_hash(t2, opp, p2, oc, c2));
+            if mv >= 0 && !banned {
+                tiles = t2;
+                pieces[side] = p2;
+                cur[side] = c2;
+                moved = true;
+                if bb::dest(mv) == GOAL {
+                    return done(side as i32, ply + 1, false, passes, false);
+                }
             }
-        } else {
+        }
+        if !moved {
             passes += 1;
             cur[side] = next_turn_pieces(me, mc, me);
         }
         let next = 1 - side;
         let c = counts.entry(turn_hash(tiles, pieces[next], pieces[side], cur[next], cur[side])).or_insert(0);
         *c += 1;
-        if *c >= 3 {
-            return Played { winner: -1, plies: ply + 1, capped: false, passes };
+        // 반복: 보통은 3번째에 무승부, 같은 국면 금지 규칙에서는 (넘김으로) 다시 나오면 진행 불가로 무승부
+        if *c >= 3 || (v.superko && *c >= 2) {
+            return done(-1, ply + 1, false, passes, false);
         }
         ply += 1;
     }
-    Played { winner: -1, plies: ply, capped: true, passes }
+    done(-1, ply, true, passes, false)
 }
 
 /// 간단한 난수 (xorshift64*)
