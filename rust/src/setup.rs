@@ -16,10 +16,29 @@ pub const PIECES: usize = 4;
 pub const STEPS: usize = TILES + PIECES;
 const TUNED: &str = include_str!("../../weights/tuned.json");
 
-/// 타일을 놓을 수 없는 칸 (가운데 3x3)
+/// 타일을 놓을 수 없는 칸. 환경 변수 SETUP_ZONE 으로 고른다 (실험용):
+/// - center (기본): 가운데 3x3 만 금지
+/// - edge: 바깥 테두리 24칸에만 놓을 수 있음 (지금 게임처럼 가장자리에서 시작)
 pub fn forbidden(cell: usize) -> bool {
     let (r, c) = (cell / SIZE, cell % SIZE);
-    (2..=4).contains(&r) && (2..=4).contains(&c)
+    match zone() {
+        Zone::Edge => !(r == 0 || c == 0 || r == SIZE - 1 || c == SIZE - 1),
+        Zone::Center => (2..=4).contains(&r) && (2..=4).contains(&c),
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Zone {
+    Center,
+    Edge,
+}
+
+pub fn zone() -> Zone {
+    static Z: std::sync::OnceLock<Zone> = std::sync::OnceLock::new();
+    *Z.get_or_init(|| match std::env::var("SETUP_ZONE").as_deref() {
+        Ok("edge") => Zone::Edge,
+        _ => Zone::Center,
+    })
 }
 
 #[derive(Clone, Debug)]
