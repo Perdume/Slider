@@ -1,0 +1,50 @@
+[
+ {
+  "key": "nn3_30ms",
+  "note": "[순환] 게임 설정 + 신경망 3차 vs 게임 설정, 30ms",
+  "a": [
+   "--a",
+   "{W}",
+   "--opts-a",
+   "lmr2,hm",
+   "--tune-a",
+   "game",
+   "--net-a",
+   "{REPO}/weights/net_cycle.txt"
+  ],
+  "b": [
+   "--b",
+   "{W}",
+   "--opts-b",
+   "lmr2,hm",
+   "--tune-b",
+   "game"
+  ],
+  "time_ms": 30,
+  "max_games": 800
+ },
+ {
+  "key": "nn3_150ms",
+  "note": "[순환] 게임 설정 + 신경망 3차 vs 게임 설정, 150ms",
+  "a": [
+   "--a",
+   "{W}",
+   "--opts-a",
+   "lmr2,hm",
+   "--tune-a",
+   "game",
+   "--net-a",
+   "{REPO}/weights/net_cycle.txt"
+  ],
+  "b": [
+   "--b",
+   "{W}",
+   "--opts-b",
+   "lmr2,hm",
+   "--tune-b",
+   "game"
+  ],
+  "time_ms": 150,
+  "max_games": 200
+ }
+]

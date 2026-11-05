@@ -34,6 +34,9 @@ final class Arena {
         int randomPlies = 4;
         // 그 뒤에도 이 확률로 무작위 수를 둔다 (데이터 다양성용)
         double epsilon = 0.0;
+        // 탐색 개선 (Rust 의 --opts lmr / lmr2 와 같음)
+        boolean lmr = false;
+        boolean lmr2 = false;
     }
 
     /** 학습 데이터 한 줄: AI 가 직접 고른 수 앞의 국면. */
@@ -100,6 +103,7 @@ final class Arena {
                     move = buffer[opening.nextInt(n)];
                 } else {
                     SliderAI engine = new SliderAI(cfg.timeMs, cfg.maxDepth, weights[side]);
+                    engine.setOptions(cfg.lmr, cfg.lmr2);
                     engine.setGameHistory(counts);
                     SliderAI.Result result = engine.search(tiles, me, opp);
                     move = result.move;
