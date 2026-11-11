@@ -45,6 +45,17 @@ public final class SelfPlay {
         cfg.randomPlies = Integer.parseInt(opt.getOrDefault("random-plies", "4"));
         cfg.epsilon = Double.parseDouble(opt.getOrDefault("epsilon", "0.05"));
         cfg.maxPlies = Integer.parseInt(opt.getOrDefault("max-plies", "150"));
+        // --opts lmr 또는 lmr2 (Rust selfplay 의 --opts 와 같음)
+        for (String o : opt.getOrDefault("opts", "").split(",")) {
+            if (o.equals("lmr")) {
+                cfg.lmr = true;
+            } else if (o.equals("lmr2")) {
+                cfg.lmr = true;
+                cfg.lmr2 = true;
+            } else if (!o.isBlank() && !o.equals("none")) {
+                throw new IllegalArgumentException("알 수 없는 탐색 옵션: " + o + " (lmr, lmr2)");
+            }
+        }
 
         if (out.getParent() != null) {
             Files.createDirectories(out.getParent());

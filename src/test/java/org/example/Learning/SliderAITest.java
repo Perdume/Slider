@@ -329,4 +329,34 @@ class SliderAITest {
         // 시간 제한 탐색이라 결과가 조금씩 달라질 수 있어 여유를 둔다 (보통 전승)
         assertTrue(aiWins >= games - 2, "AI won only " + aiWins + " of " + games);
     }
+
+    @Test
+    void parallelSearchWithLmrReturnsALegalMoveAndFindsAnImmediateWin() {
+        long tiles = BitBoard.fromArray(startBoard());
+        long me = BitBoard.pieces(AI_START);
+        long opp = BitBoard.pieces(PLAYER_START);
+        int[] buffer = new int[BitBoard.MAX_MOVES];
+        int n = BitBoard.generate(tiles, me, opp, buffer);
+        Set<Integer> legal = new HashSet<>();
+        for (int i = 0; i < n; i++) {
+            legal.add(buffer[i]);
+        }
+        for (int threads : new int[]{1, 4}) {
+            SliderAI ai = new SliderAI(200, 40);
+            ai.setOptions(true, true);
+            ai.setThreads(threads);
+            SliderAI.Result r = ai.search(tiles, me, opp);
+            assertTrue(legal.contains(r.move), "스레드 " + threads + ": 둘 수 없는 수를 골랐습니다");
+            assertTrue(r.depth >= 2, "스레드 " + threads + ": 깊이 " + r.depth);
+        }
+        // 바로 이길 수 있으면 병렬 탐색이어도 그 수를 둔다: (3,6) 의 말이 왼쪽으로 미끄러지면 골 (3,3) 왼쪽의 받침 (3,2) 앞, 즉 골에서 멈춘다
+        long t2 = BitBoard.fromArray(boardWith(new int[]{3, 2}, new int[]{3, 6}, new int[]{0, 0}, new int[]{6, 6}));
+        long me2 = BitBoard.pieces(new int[][]{{3, 6}});
+        long opp2 = BitBoard.pieces(new int[][]{{0, 0}});
+        SliderAI ai = new SliderAI(200, 40);
+        ai.setOptions(true, true);
+        ai.setThreads(4);
+        SliderAI.Result r = ai.search(t2, me2, opp2);
+        assertEquals(BitBoard.GOAL, BitBoard.dest(r.move));
+    }
 }

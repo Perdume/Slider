@@ -1,0 +1,523 @@
+<title>Slider 대국 리뷰</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+KR:wght@400;500;700&family=JetBrains+Mono:wght@500;700&display=swap">
+<style>
+/* 배치: 왼쪽 형세 막대 | 보드 | 오른쪽 리뷰 패널 (좁으면 패널이 아래로) */
+:root {
+  --bg: #eef0ee;
+  --panel: #ffffff;
+  --panel-2: #f4f6f4;
+  --line: #d8ddd8;
+  --fg: #1d2421;
+  --muted: #5d6a64;
+  --accent: #2f7a5b;
+  --accent-fg: #ffffff;
+  --frame: #2a3438;
+  --void: #33403f;
+  --void-dot: #43514f;
+  --tile: #c9b994;
+  --tile-hi: #ddd0ad;
+  --tile-lo: #a8996f;
+  --goal: #e2a93b;
+  --a-piece: #f7f5ef;
+  --a-ink: #1d2421;
+  --b-piece: #1b1f22;
+  --b-ink: #f7f5ef;
+  --a-move: #e98a3c;
+  --b-move: #3b8fd9;
+  --best: #2f9e6e;
+  --good: #7aa86a;
+  --inacc: #e0b43a;
+  --mistake: #e7832f;
+  --blunder: #d6453d;
+  --win: #7b5cd6;
+  --random: #8a9590;
+  --bar-a: #f7f5ef;
+  --bar-b: #262c2f;
+  --font-ui: "IBM Plex Sans KR", "Apple SD Gothic Neo", "Malgun Gothic", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #151a19; --panel: #1e2523; --panel-2: #252d2b; --line: #33403c; --fg: #e8ece9; --muted: #9aa8a2;
+    --accent: #4fb388; --accent-fg: #0f1513; --frame: #0f1416; --void: #26302f; --void-dot: #33403e;
+    --bar-a: #eceae3; --bar-b: #0c0f10;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #151a19; --panel: #1e2523; --panel-2: #252d2b; --line: #33403c; --fg: #e8ece9; --muted: #9aa8a2;
+  --accent: #4fb388; --accent-fg: #0f1513; --frame: #0f1416; --void: #26302f; --void-dot: #33403e;
+  --bar-a: #eceae3; --bar-b: #0c0f10;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body {
+  background: var(--bg); color: var(--fg); font-family: var(--font-ui); font-size: 14px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 16px 28px;
+}
+button, select { font: inherit; color: inherit; }
+button:focus-visible, select:focus-visible, .mv:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.wrap { max-width: 1120px; margin: 0 auto; display: grid; gap: 14px; }
+header.top { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 6px 16px; }
+header.top h1 { margin: 0; font-size: 20px; font-weight: 700; letter-spacing: -0.01em; }
+header.top p { margin: 0; color: var(--muted); font-size: 13px; }
+.games { display: flex; gap: 6px; flex-wrap: wrap; }
+.games button {
+  border: 1px solid var(--line); background: var(--panel); border-radius: 999px; padding: 5px 12px; cursor: pointer;
+  font-size: 13px; display: inline-flex; gap: 6px; align-items: center;
+}
+.games button[aria-pressed="true"] { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
+.games .res { font-family: var(--font-mono); font-size: 12px; opacity: .8; }
+
+.main { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 16px; align-items: start; }
+.boardcol { display: grid; gap: 8px; min-width: 0; }
+.player { display: flex; align-items: center; gap: 10px; padding: 2px 2px; }
+.player .dot { width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; font: 700 12px var(--font-mono); }
+.player.a .dot { background: var(--a-piece); color: var(--a-ink); border: 1.5px solid #8d958f; }
+.player.b .dot { background: var(--b-piece); color: var(--b-ink); border: 1.5px solid #4c5559; }
+.player .name { font-weight: 700; }
+.player .sub { color: var(--muted); font-size: 12px; }
+.player .acc { margin-left: auto; font-family: var(--font-mono); font-size: 13px; color: var(--muted); }
+.player > div { min-width: 0; }
+.player .acc { white-space: nowrap; }
+.player .turn { white-space: nowrap; flex: none; font-size: 11px; font-weight: 700; padding: 2px 7px; border-radius: 4px; background: var(--accent); color: var(--accent-fg); visibility: hidden; }
+.player.on .turn { visibility: visible; }
+.stage { display: grid; grid-template-columns: 26px minmax(0, 1fr); gap: 8px; }
+.evalbar { position: relative; border-radius: 4px; overflow: hidden; background: var(--bar-b); }
+.evalbar .fill { position: absolute; left: 0; right: 0; bottom: 0; background: var(--bar-a); transition: height .35s ease; }
+.evalbar .num { position: absolute; left: 0; right: 0; font: 700 10px var(--font-mono); text-align: center; }
+.evalbar .num.bot { bottom: 4px; color: #2a3135; }
+.evalbar .num.topn { top: 4px; color: #e9ece9; }
+.board { width: 100%; max-width: 100%; aspect-ratio: 1 / 1; display: block; border-radius: 6px; background: var(--frame); }
+.board .piece { transition: transform .28s ease; }
+@media (prefers-reduced-motion: reduce) { .board .piece, .evalbar .fill { transition: none; } }
+
+.controls { display: flex; gap: 6px; align-items: center; justify-content: center; flex-wrap: wrap; }
+.controls button {
+  min-width: 46px; height: 40px; border-radius: 6px; border: 1px solid var(--line); background: var(--panel); cursor: pointer;
+  font-size: 16px; display: grid; place-items: center; padding: 0 10px;
+}
+.controls button.play { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); min-width: 64px; }
+.controls select { height: 40px; border-radius: 6px; border: 1px solid var(--line); background: var(--panel); padding: 0 8px; }
+
+aside.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; display: grid; min-width: 0; }
+.now { padding: 14px; display: grid; gap: 8px; border-bottom: 1px solid var(--line); }
+.now .row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.badge { display: inline-flex; align-items: center; gap: 5px; font-weight: 700; font-size: 13px; padding: 3px 9px; border-radius: 999px; color: #fff; }
+.badge .ic { font-family: var(--font-mono); font-size: 12px; }
+.now .note { font-family: var(--font-mono); font-size: 15px; font-weight: 700; }
+.now .meta { color: var(--muted); font-size: 12px; font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+.now .say { font-size: 13px; line-height: 1.55; }
+.graph { padding: 10px 14px 6px; border-bottom: 1px solid var(--line); }
+.graph svg { width: 100%; height: 74px; display: block; cursor: pointer; }
+.graph .cap { display: flex; justify-content: space-between; color: var(--muted); font-size: 11px; }
+.summary { display: grid; grid-template-columns: 1fr auto auto; gap: 4px 12px; padding: 10px 14px; border-bottom: 1px solid var(--line); font-size: 13px; font-variant-numeric: tabular-nums; }
+.summary .h { color: var(--muted); font-size: 12px; text-align: center; }
+.summary .h:first-child { text-align: left; }
+.summary .c { text-align: center; font-family: var(--font-mono); }
+.summary .k { display: flex; align-items: center; gap: 6px; }
+.summary .sw { width: 9px; height: 9px; border-radius: 50%; }
+.moves { max-height: 360px; overflow-y: auto; padding: 4px 0; }
+.mrow { display: grid; grid-template-columns: 38px 1fr 1fr; align-items: center; font-size: 13px; }
+.mrow:nth-child(odd) { background: var(--panel-2); }
+.mrow .no { color: var(--muted); font-family: var(--font-mono); font-size: 12px; text-align: right; padding-right: 8px; }
+.mv { border: 0; background: none; text-align: left; padding: 5px 6px; cursor: pointer; font-family: var(--font-mono); font-size: 12.5px; border-radius: 4px; display: flex; align-items: center; gap: 5px; min-width: 0; white-space: nowrap; overflow: hidden; }
+.mv .t { overflow: hidden; text-overflow: ellipsis; }
+.mv .k { width: 14px; flex: none; text-align: center; font-weight: 700; }
+.mv.cur { background: var(--accent); color: var(--accent-fg); }
+.mv.cur .k { color: var(--accent-fg) !important; }
+.endline { padding: 10px 14px; font-weight: 700; border-top: 1px solid var(--line); }
+.help { color: var(--muted); font-size: 12px; text-align: center; }
+
+@media (max-width: 860px) {
+  .main { grid-template-columns: minmax(0, 1fr); }
+  .moves { max-height: 260px; }
+}
+@media (max-width: 420px) {
+  .stage { grid-template-columns: 18px minmax(0, 1fr); gap: 6px; }
+  .evalbar .num { font-size: 8px; }
+  .controls button { min-width: 40px; }
+}
+</style>
+
+<div class="wrap">
+  <header class="top">
+    <h1>Slider 대국 리뷰</h1>
+    <p>지금 게임 AI 끼리 둔 판 · 새 규칙 (1 → X → 2 → Y) · 수당 <span id="tms"></span>ms</p>
+  </header>
+  <div class="games" id="games" role="group" aria-label="판 고르기"></div>
+
+  <div class="main">
+    <div class="boardcol">
+      <div class="player b" id="pb"><span class="dot">X</span><div><div class="name">B · AI 자리</div><div class="sub">말 X(오른쪽 아래) · Y(왼쪽 위)</div></div><span class="turn">차례</span><span class="acc" id="accb"></span></div>
+      <div class="stage">
+        <div class="evalbar" id="evalbar" aria-label="형세 막대"><div class="fill" id="evalfill"></div><span class="num topn" id="evaltop"></span><span class="num bot" id="evalbot"></span></div>
+        <svg class="board" id="board" viewBox="-34 -6 740 740" role="img" aria-label="보드"></svg>
+      </div>
+      <div class="player a" id="pa"><span class="dot">1</span><div><div class="name">A · 플레이어 자리</div><div class="sub">말 1(오른쪽 위) · 2(왼쪽 아래) · 먼저 둠</div></div><span class="turn">차례</span><span class="acc" id="acca"></span></div>
+      <div class="controls">
+        <button id="bFirst" aria-label="처음">⏮</button>
+        <button id="bPrev" aria-label="이전 수">◀</button>
+        <button id="bPlay" class="play" aria-label="자동 재생">▶ 재생</button>
+        <button id="bNext" aria-label="다음 수">▶</button>
+        <button id="bLast" aria-label="마지막">⏭</button>
+        <select id="speed" aria-label="재생 속도">
+          <option value="1400">느리게</option>
+          <option value="800" selected>보통</option>
+          <option value="350">빠르게</option>
+        </select>
+      </div>
+      <div class="help">키보드: ← → 한 수씩 · Home / End · 스페이스 재생</div>
+    </div>
+
+    <aside class="panel">
+      <div class="now">
+        <div class="row" id="nowTop"></div>
+        <div class="meta" id="nowMeta"></div>
+        <div class="say" id="nowSay"></div>
+      </div>
+      <div class="graph">
+        <svg id="graph" viewBox="0 0 300 74" preserveAspectRatio="none" aria-label="형세 그래프 (누르면 그 수로 이동)"></svg>
+        <div class="cap"><span>처음</span><span>위: B 유리 · 아래: A 유리</span><span>끝</span></div>
+      </div>
+      <div class="summary" id="summary"></div>
+      <div class="moves" id="moves"></div>
+      <div class="endline" id="endline"></div>
+    </aside>
+  </div>
+</div>
+
+<script>
+const DATA = /*GAMES*/null;
+const GOAL = DATA.goal, WINB = DATA.winBound, N = 7, CS = 100;
+const LABEL = [["1", "2"], ["X", "Y"]];
+const ARROW = ["↑", "↓", "←", "→"];
+const CLS = {
+  win:     { name: "승리 수", ic: "!!", color: "var(--win)" },
+  best:    { name: "최선", ic: "★", color: "var(--best)" },
+  good:    { name: "좋음", ic: "✓", color: "var(--good)" },
+  inacc:   { name: "부정확", ic: "?!", color: "var(--inacc)" },
+  mistake: { name: "실수", ic: "?", color: "var(--mistake)" },
+  blunder: { name: "블런더", ic: "??", color: "var(--blunder)" },
+  random:  { name: "시작 무작위", ic: "~", color: "var(--random)" },
+  pass:    { name: "넘김", ic: "–", color: "var(--random)" },
+};
+const SAY = {
+  win: "이 수로 이기는 길을 확정했습니다.",
+  best: "엔진이 본 형세를 그대로 지킨 수입니다.",
+  good: "형세를 조금 내줬지만 무난한 수입니다.",
+  inacc: "더 나은 수가 있었습니다. 형세가 조금 기울었습니다.",
+  mistake: "상대에게 기회를 준 수입니다.",
+  blunder: "형세를 크게 잃은 수입니다. 다음 수 탐색에서 점수가 크게 바뀌었습니다.",
+  random: "판을 다양하게 하려고 처음 두 수는 무작위로 둡니다.",
+  pass: "움직일 수 있는 칸이 없어 차례를 넘겼습니다.",
+};
+const coord = c => "abcdefg"[c % N] + (N - Math.floor(c / N));
+const isTile = (t, c) => Math.floor(t / 2 ** c) % 2 === 1;
+const wp = s => s >= WINB ? 1 : s <= -WINB ? 0 : 1 / (1 + Math.exp(-s / 180));
+
+function prepare(g) {
+  // 각 수 뒤의 국면(타일, 말 위치)과 A 기준 형세, 수 분류를 만든다
+  let tiles = Number(DATA.start);
+  let cells = [DATA.startCells[0].slice(), DATA.startCells[1].slice()];
+  let next = [0, 0];
+  const states = [{ tiles, cells: [cells[0].slice(), cells[1].slice()], next: next.slice(), toMove: 0 }];
+  g.plies.forEach((p, i) => {
+    if (!p.pass) { tiles = Number(p.tiles); cells[p.side][p.piece] = p.dest; }
+    next[p.side] ^= 1;
+    states.push({ tiles, cells: [cells[0].slice(), cells[1].slice()], next: next.slice(), toMove: 1 - p.side });
+  });
+  // 수를 둔 쪽 기준 점수 (탐색한 수만). A 기준 형세 = i 번째 수 뒤 국면을 다음 수의 탐색 점수로
+  const searched = g.plies.map(p => !p.pass && !p.random);
+  const evalA = [0];
+  g.plies.forEach((p, i) => {
+    const last = i === g.plies.length - 1;
+    let v;
+    if (last && g.result !== "draw") v = g.result === "A" ? WINB + 1 : -(WINB + 1);
+    else {
+      const q = g.plies[i + 1];
+      if (q && searched[i + 1]) v = q.side === 0 ? q.score : -q.score;
+      else v = evalA[evalA.length - 1];
+    }
+    evalA.push(v);
+  });
+  const cls = g.plies.map((p, i) => {
+    if (p.pass) return "pass";
+    if (p.random) return "random";
+    if (p.dest === GOAL) return "win";
+    const before = wp(p.score);
+    const afterA = evalA[i + 1];
+    const after = wp(p.side === 0 ? afterA : -afterA);
+    const loss = before - after;
+    if (p.score >= WINB && i > 0) {
+      const prev = g.plies.slice(0, i).reverse().find(q => q.side === p.side && !q.pass);
+      if (!prev || prev.score < WINB) return "win";
+    }
+    if (loss > 0.2) return "blunder";
+    if (loss > 0.1) return "mistake";
+    if (loss > 0.05) return "inacc";
+    if (loss > 0.015) return "good";
+    return "best";
+  });
+  const loss = g.plies.map((p, i) => {
+    if (p.pass || p.random) return null;
+    const after = wp(p.side === 0 ? evalA[i + 1] : -evalA[i + 1]);
+    return Math.max(0, wp(p.score) - after);
+  });
+  const acc = [0, 1].map(s => {
+    const ls = loss.filter((l, i) => l !== null && g.plies[i].side === s);
+    if (!ls.length) return null;
+    const accs = ls.map(l => Math.max(0, Math.min(100, 103.1668 * Math.exp(-0.04354 * l * 100) - 3.1669)));
+    return accs.reduce((a, b) => a + b, 0) / accs.length;
+  });
+  return { states, evalA, cls, acc };
+}
+
+function notation(p) {
+  if (p.pass) return LABEL[p.side][p.piece] + " 넘김";
+  const walk = p.path.length > 1 ? p.path.map(coord).join("-") : coord(p.path[0]);
+  return `${LABEL[p.side][p.piece]} ${walk} ${ARROW[p.dir]}${coord(p.dest)}`;
+}
+function fmtEval(v) {
+  if (v >= WINB) return "승";
+  if (v <= -WINB) return "승";
+  const x = Math.abs(v) / 100;
+  return x.toFixed(1);
+}
+
+// ---------- 상태 ----------
+let gi = 0, ply = 0, prep = null, timer = null;
+const $ = id => document.getElementById(id);
+
+function svgEl(tag, attrs, parent) {
+  const e = document.createElementNS("http://www.w3.org/2000/svg", tag);
+  for (const k in attrs) e.setAttribute(k, attrs[k]);
+  if (parent) parent.appendChild(e);
+  return e;
+}
+const cx = c => (c % N) * CS + CS / 2, cy = c => Math.floor(c / N) * CS + CS / 2;
+
+function drawBoard() {
+  const g = DATA.games[gi], st = prep.states[ply], board = $("board");
+  board.innerHTML = "";
+  const css = getComputedStyle(document.documentElement);
+  const col = n => css.getPropertyValue(n).trim();
+  svgEl("rect", { x: 0, y: 0, width: 700, height: 700, rx: 6, fill: col("--void") }, board);
+  // 좌표
+  for (let i = 0; i < N; i++) {
+    svgEl("text", { x: -17, y: i * CS + 56, "text-anchor": "middle", "font-size": 22, "font-family": "JetBrains Mono, monospace", fill: "#8f9c97" }, board).textContent = N - i;
+    svgEl("text", { x: i * CS + 50, y: 726, "text-anchor": "middle", "font-size": 22, "font-family": "JetBrains Mono, monospace", fill: "#8f9c97" }, board).textContent = "abcdefg"[i];
+  }
+  for (let c = 0; c < N * N; c++) {
+    const x = (c % N) * CS, y = Math.floor(c / N) * CS;
+    if (isTile(st.tiles, c)) {
+      svgEl("rect", { x: x + 5, y: y + 5, width: 90, height: 90, rx: 9, fill: col("--tile-lo") }, board);
+      svgEl("rect", { x: x + 5, y: y + 5, width: 90, height: 84, rx: 9, fill: col("--tile") }, board);
+      svgEl("rect", { x: x + 12, y: y + 10, width: 76, height: 6, rx: 3, fill: col("--tile-hi"), opacity: 0.8 }, board);
+    } else {
+      svgEl("circle", { cx: x + 50, cy: y + 50, r: 3, fill: col("--void-dot") }, board);
+    }
+  }
+  // 골
+  svgEl("circle", { cx: cx(GOAL), cy: cy(GOAL), r: 36, fill: "none", stroke: col("--goal"), "stroke-width": 4, opacity: 0.9 }, board);
+  svgEl("circle", { cx: cx(GOAL), cy: cy(GOAL), r: 22, fill: "none", stroke: col("--goal"), "stroke-width": 2, opacity: 0.6 }, board);
+  if (!st.cells.some(s => s.includes(GOAL)))
+    svgEl("text", { x: cx(GOAL), y: cy(GOAL) + 8, "text-anchor": "middle", "font-size": 22, "font-weight": 700, "font-family": "JetBrains Mono, monospace", fill: col("--goal") }, board).textContent = "골";
+
+  // 마지막 수 표시
+  if (ply > 0) {
+    const p = g.plies[ply - 1];
+    if (!p.pass) {
+      const mcol = p.side === 0 ? col("--a-move") : col("--b-move");
+      // 미끄러지기 전 타일 자리
+      svgEl("rect", { x: (p.from % N) * CS + 7, y: Math.floor(p.from / N) * CS + 7, width: 86, height: 86, rx: 9, fill: "none", stroke: mcol, "stroke-width": 3, "stroke-dasharray": "8 6", opacity: 0.9 }, board);
+      svgEl("rect", { x: (p.dest % N) * CS + 4, y: Math.floor(p.dest / N) * CS + 4, width: 92, height: 92, rx: 10, fill: mcol, opacity: 0.22 }, board);
+      if (p.path.length > 1) {
+        svgEl("polyline", { points: p.path.map(c => `${cx(c)},${cy(c)}`).join(" "), fill: "none", stroke: mcol, "stroke-width": 6, "stroke-linecap": "round", "stroke-linejoin": "round", "stroke-dasharray": "2 12", opacity: 0.95 }, board);
+      }
+      // 미끄러짐 화살표
+      const x1 = cx(p.from), y1 = cy(p.from), x2 = cx(p.dest), y2 = cy(p.dest);
+      const len = Math.hypot(x2 - x1, y2 - y1);
+      if (len > 0) {
+        const ux = (x2 - x1) / len, uy = (y2 - y1) / len, hx = x2 - ux * 30, hy = y2 - uy * 30;
+        svgEl("line", { x1: x1 + ux * 10, y1: y1 + uy * 10, x2: hx, y2: hy, stroke: mcol, "stroke-width": 14, "stroke-linecap": "round", opacity: 0.75 }, board);
+        svgEl("polygon", { points: `${x2 - ux * 6},${y2 - uy * 6} ${hx - uy * 20},${hy + ux * 20} ${hx + uy * 20},${hy - ux * 20}`, fill: mcol, opacity: 0.85 }, board);
+      }
+    }
+  }
+  // 말
+  const toMove = st.toMove, nextPiece = st.next[toMove];
+  for (let s = 0; s < 2; s++) for (let i = 0; i < 2; i++) {
+    const c = st.cells[s][i];
+    const gEl = svgEl("g", { class: "piece" }, board);
+    gEl.style.transform = `translate(${cx(c)}px, ${cy(c)}px)`;
+    const finished = ply === g.plies.length && g.result !== "draw";
+    if (!finished && s === toMove && i === nextPiece)
+      svgEl("circle", { r: 40, fill: "none", stroke: col("--accent"), "stroke-width": 5, "stroke-dasharray": "10 6" }, gEl);
+    svgEl("circle", { r: 31, cy: 3, fill: "#000", opacity: 0.25 }, gEl);
+    svgEl("circle", { r: 30, fill: s === 0 ? col("--a-piece") : col("--b-piece"), stroke: s === 0 ? "#8d958f" : "#59636a", "stroke-width": 3 }, gEl);
+    svgEl("text", { y: 10, "text-anchor": "middle", "font-size": 30, "font-weight": 700, "font-family": "JetBrains Mono, monospace", fill: s === 0 ? col("--a-ink") : col("--b-ink") }, gEl).textContent = LABEL[s][i];
+  }
+}
+
+function drawEval() {
+  const v = prep.evalA[ply];
+  // A 는 아래(흰), B 는 위(검): A 가 유리하면 흰 부분이 커진다
+  const h = Math.round(wp(v) * 1000) / 10;
+  $("evalfill").style.height = h + "%";
+  const txt = fmtEval(v);
+  $("evalbot").textContent = v >= 0 ? (v >= WINB ? "A승" : "+" + txt) : "";
+  $("evaltop").textContent = v < 0 ? (v <= -WINB ? "B승" : "+" + txt) : "";
+}
+
+function drawGraph() {
+  const svg = $("graph"), ev = prep.evalA, n = ev.length - 1 || 1;
+  svg.innerHTML = "";
+  const css = getComputedStyle(document.documentElement), col = k => css.getPropertyValue(k).trim();
+  svgEl("rect", { x: 0, y: 0, width: 300, height: 74, fill: col("--bar-b") }, svg);
+  let d = `M0,74 `;
+  ev.forEach((v, i) => { d += `L${(i / n) * 300},${74 - wp(v) * 74} `; });
+  d += `L300,74 Z`;
+  svgEl("path", { d, fill: col("--bar-a") }, svg);
+  svgEl("line", { x1: 0, x2: 300, y1: 37, y2: 37, stroke: "#7f8a86", "stroke-width": 0.6, "stroke-dasharray": "3 3" }, svg);
+  prep.cls.forEach((c, i) => {
+    if (c === "blunder" || c === "mistake") {
+      svgEl("circle", { cx: ((i + 1) / n) * 300, cy: 74 - wp(ev[i + 1]) * 74, r: 2.6, fill: CLS[c].color.startsWith("var") ? col(CLS[c].color.slice(4, -1)) : CLS[c].color }, svg);
+    }
+  });
+  svgEl("line", { x1: (ply / n) * 300, x2: (ply / n) * 300, y1: 0, y2: 74, stroke: col("--accent"), "stroke-width": 2 }, svg);
+}
+
+function drawNow() {
+  const g = DATA.games[gi];
+  const top = $("nowTop"), meta = $("nowMeta"), say = $("nowSay");
+  top.innerHTML = ""; meta.textContent = ""; say.textContent = "";
+  if (ply === 0) {
+    top.innerHTML = `<span class="note">시작 국면</span>`;
+    say.textContent = "A 의 1번 말부터 시계 방향으로 한 말씩 둡니다: 1 → X → 2 → Y. 가운데 칸(골)에 먼저 닿으면 이깁니다.";
+    return;
+  }
+  const p = g.plies[ply - 1], c = prep.cls[ply - 1], k = CLS[c];
+  const b = document.createElement("span");
+  b.className = "badge"; b.style.background = k.color;
+  b.innerHTML = `<span class="ic">${k.ic}</span>${k.name}`;
+  top.appendChild(b);
+  const nt = document.createElement("span");
+  nt.className = "note"; nt.textContent = `${ply}. ${notation(p)}`;
+  top.appendChild(nt);
+  if (!p.pass && !p.random) {
+    const sc = p.score >= WINB ? "이김 확정" : p.score <= -WINB ? "짐 확정" : (p.score >= 0 ? "+" : "") + (p.score / 100).toFixed(2);
+    meta.textContent = `둔 쪽 기준 형세 ${sc} · 깊이 ${p.depth} · 노드 ${p.nodes.toLocaleString("ko-KR")}`;
+  }
+  let s = SAY[c];
+  if (p.dest === GOAL) s = `${LABEL[p.side][p.piece]} 이(가) 골에 닿았습니다. ${p.side === 0 ? "A" : "B"} 승리.`;
+  else if (!p.pass && p.path.length > 1) s += ` ${LABEL[p.side][p.piece]} 은(는) ${p.path.length - 1}칸 걸은 뒤 ${coord(p.from)} 타일을 타고 ${ARROW[p.dir]} 방향으로 미끄러져 ${coord(p.dest)} 에 멈췄습니다.`;
+  else if (!p.pass) s += ` ${LABEL[p.side][p.piece]} 은(는) 서 있던 타일째 ${ARROW[p.dir]} 방향으로 미끄러져 ${coord(p.dest)} 에 멈췄습니다.`;
+  say.textContent = s;
+}
+
+function drawMoves() {
+  const g = DATA.games[gi], box = $("moves");
+  box.innerHTML = "";
+  for (let r = 0; r < g.plies.length; r += 2) {
+    const row = document.createElement("div");
+    row.className = "mrow";
+    row.innerHTML = `<span class="no">${r / 2 + 1}.</span>`;
+    for (let j = r; j < r + 2; j++) {
+      if (j >= g.plies.length) { row.appendChild(document.createElement("span")); continue; }
+      const b = document.createElement("button");
+      b.className = "mv"; b.dataset.ply = j + 1;
+      const k = CLS[prep.cls[j]];
+      const showK = ["win", "inacc", "mistake", "blunder"].includes(prep.cls[j]);
+      b.innerHTML = `<span class="k" style="color:${k.color}">${showK ? k.ic : ""}</span><span class="t"></span>`;
+      b.querySelector(".t").textContent = notation(g.plies[j]);
+      b.addEventListener("click", () => go(j + 1));
+      row.appendChild(b);
+    }
+    box.appendChild(row);
+  }
+  const res = g.result === "draw" ? `무승부 (${g.reason})` : `${g.result} 승리 · ${g.reason} · ${g.plies.length}수`;
+  $("endline").textContent = res;
+}
+
+function drawSummary() {
+  const g = DATA.games[gi], el = $("summary");
+  const keys = ["best", "good", "inacc", "mistake", "blunder"];
+  let html = `<span class="h">분류</span><span class="h">A</span><span class="h">B</span>`;
+  keys.forEach(k => {
+    const cnt = s => prep.cls.filter((c, i) => c === k && g.plies[i].side === s).length;
+    html += `<span class="k"><span class="sw" style="background:${CLS[k].color}"></span>${CLS[k].name}</span><span class="c">${cnt(0)}</span><span class="c">${cnt(1)}</span>`;
+  });
+  el.innerHTML = html;
+  $("acca").textContent = prep.acc[0] == null ? "" : `정확도 ${prep.acc[0].toFixed(1)}`;
+  $("accb").textContent = prep.acc[1] == null ? "" : `정확도 ${prep.acc[1].toFixed(1)}`;
+}
+
+function highlight() {
+  document.querySelectorAll(".mv.cur").forEach(e => e.classList.remove("cur"));
+  const cur = document.querySelector(`.mv[data-ply="${ply}"]`);
+  if (cur) {
+    cur.classList.add("cur");
+    const box = $("moves"), top = cur.offsetTop - box.offsetTop;
+    if (top < box.scrollTop || top > box.scrollTop + box.clientHeight - 40) box.scrollTop = top - box.clientHeight / 2;
+  }
+  const st = prep.states[ply], g = DATA.games[gi];
+  const done = ply === g.plies.length;
+  $("pa").classList.toggle("on", !done && st.toMove === 0);
+  $("pb").classList.toggle("on", !done && st.toMove === 1);
+}
+
+function render() { drawBoard(); drawEval(); drawGraph(); drawNow(); highlight(); }
+function go(n) {
+  const max = DATA.games[gi].plies.length;
+  ply = Math.max(0, Math.min(max, n));
+  render();
+  if (ply === max) stop();
+}
+function stop() { clearInterval(timer); timer = null; $("bPlay").textContent = "▶ 재생"; }
+function play() {
+  if (timer) return stop();
+  if (ply === DATA.games[gi].plies.length) go(0);
+  $("bPlay").textContent = "❚❚ 멈춤";
+  timer = setInterval(() => go(ply + 1), Number($("speed").value));
+}
+function pickGame(i) {
+  stop(); gi = i; prep = prepare(DATA.games[gi]); ply = 0;
+  document.querySelectorAll(".games button").forEach((b, j) => b.setAttribute("aria-pressed", j === i ? "true" : "false"));
+  drawMoves(); drawSummary(); render();
+}
+
+$("tms").textContent = DATA.games[0].timeMs;
+DATA.games.forEach((g, i) => {
+  const b = document.createElement("button");
+  const r = g.result === "draw" ? "무" : g.result + "승";
+  b.innerHTML = `${i + 1}판 <span class="res">${r} · ${g.plies.length}수</span>`;
+  b.addEventListener("click", () => pickGame(i));
+  $("games").appendChild(b);
+});
+$("bFirst").onclick = () => { stop(); go(0); };
+$("bPrev").onclick = () => { stop(); go(ply - 1); };
+$("bNext").onclick = () => { stop(); go(ply + 1); };
+$("bLast").onclick = () => { stop(); go(DATA.games[gi].plies.length); };
+$("bPlay").onclick = play;
+$("speed").onchange = () => { if (timer) { stop(); play(); } };
+$("graph").addEventListener("click", e => {
+  const r = e.currentTarget.getBoundingClientRect();
+  stop(); go(Math.round(((e.clientX - r.left) / r.width) * DATA.games[gi].plies.length));
+});
+document.addEventListener("keydown", e => {
+  if (e.target.tagName === "SELECT") return;
+  if (e.key === "ArrowRight") { stop(); go(ply + 1); e.preventDefault(); }
+  else if (e.key === "ArrowLeft") { stop(); go(ply - 1); e.preventDefault(); }
+  else if (e.key === "Home") { stop(); go(0); e.preventDefault(); }
+  else if (e.key === "End") { stop(); go(DATA.games[gi].plies.length); e.preventDefault(); }
+  else if (e.key === " " && e.target.tagName !== "BUTTON") { play(); e.preventDefault(); }
+});
+window.matchMedia("(prefers-color-scheme: dark)").addEventListener?.("change", render);
+new MutationObserver(render).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+pickGame(0);
+</script>
