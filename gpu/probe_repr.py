@@ -161,7 +161,13 @@ def run(path, variant, steps, batch=128, seed=0):
     n = len(d["src"])
     rng = np.random.default_rng(seed)
     perm = rng.permutation(n)
-    te, tr = perm[:4000], perm[4000:]
+    # 전술 국면(바로 이김 / 위협 / 바로 지는 수가 있는 국면)은 1% 남짓이라, 검증은 전술 국면을 따로 모으고 학습은 절반을 전술 국면에서 뽑는다
+    tac = d["win1"] | d["threat"] | d["lose"].any(1)
+    ti, qi = perm[tac[perm]], perm[~tac[perm]]
+    te = np.concatenate([ti[:600], qi[:3400]])
+    tr_t, tr_q = ti[600:], qi[3400:]
+    tr = np.concatenate([tr_t, tr_q])
+    print(f"국면 {n}, 전술 국면 {tac.sum()} ({tac.mean():.1%}), 학습용 전술 국면 {len(tr_t)}", flush=True)
     p = init(jax.random.PRNGKey(seed), 13 if use else 9)
     opt = optax.adamw(optax.cosine_decay_schedule(1e-3, steps), weight_decay=1e-4)
     os_ = opt.init(p)
@@ -199,8 +205,10 @@ def run(path, variant, steps, batch=128, seed=0):
             v = va[m]
             lp, lt = (l[m] > 0)[v], lo[v]
             tp = (lp & lt).sum()
+            rc = lambda pr, t: (pr & t).sum() / max(t.sum(), 1)
             res[name] = dict(
-                win1=((a[m] > 0) == w1).mean(), threat=((b[m] > 0) == th).mean(),
+                win1_recall=rc(a[m] > 0, w1), win1_false=((a[m] > 0) & ~w1).sum() / max((~w1).sum(), 1),
+                threat_recall=rc(b[m] > 0, th), threat_false=((b[m] > 0) & ~th).sum() / max((~th).sum(), 1),
                 lose_acc=(lp == lt).mean(), lose_recall=tp / max(lt.sum(), 1), lose_prec=tp / max(lp.sum(), 1),
                 # 한 국면에서 "바로 지는 수" 판단을 모든 수에 대해 다 맞힌 비율 (실제 대국에 필요한 것)
                 lose_all=np.mean([((l[m][i] > 0) == lo[i])[v[i]].all() for i in range(len(v))]),
@@ -209,7 +217,8 @@ def run(path, variant, steps, batch=128, seed=0):
 
     t0 = time.time()
     for s in range(1, steps + 1):
-        p, os_ = step(p, os_, *batch_of(rng.choice(tr, batch)))
+        idx = np.concatenate([rng.choice(tr_t, batch // 2), rng.choice(tr_q, batch // 2)])
+        p, os_ = step(p, os_, *batch_of(idx))
         if s % max(steps // 6, 1) == 0 or s == steps:
             res = evaluate()
             line = " | ".join(f"{k} " + " ".join(f"{m}={v:.3f}" for m, v in r.items()) for k, r in res.items())
